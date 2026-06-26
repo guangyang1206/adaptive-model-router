@@ -1,0 +1,53 @@
+# Quickstart
+
+Adaptive Model Router is currently scaffolded for MVP-0. This quickstart shows the intended developer flow.
+
+## 1. Install
+
+```bash
+pnpm add @adaptive-router/sdk
+```
+
+## 2. Initialize a router
+
+```ts
+import { createRouter } from '@adaptive-router/sdk'
+
+const router = createRouter({
+  providers: [],
+  policy: {
+    defaultQuality: 'balanced',
+    stability: 'high',
+    costMode: 'optimize-within-quality-threshold',
+  },
+})
+```
+
+## 3. Send a routed request
+
+```ts
+const result = await router.chat({
+  messages: [{ role: 'user', content: 'Plan the next coding task.' }],
+  route: {
+    task: 'plan',
+    quality: 'high',
+    stability: 'high',
+    explain: true,
+  },
+})
+
+console.log(result.routerTrace)
+```
+
+## 4. Open the local dashboard
+
+```ts
+const dashboard = await router.dashboard({ port: 4318 })
+console.log(dashboard.url)
+```
+
+## MVP limitation
+
+MVP-0 does not judge answer quality in real time. Quality is represented by capability match, configured model tier, and health/success signals.
+
+Streaming requests do not support mid-stream fallback after the first token has been emitted.

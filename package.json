@@ -1,0 +1,33 @@
+{
+  "name": "adaptive-model-router-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SDK-first adaptive model router for agent apps.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint"
+  },
+  "keywords": [
+    "agent",
+    "llm",
+    "model-router",
+    "adaptive-routing",
+    "fallback",
+    "openai",
+    "anthropic",
+    "deepseek",
+    "ollama"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/guangyang1206/adaptive-model-router.git"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
