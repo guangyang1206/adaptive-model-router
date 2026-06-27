@@ -1,14 +1,15 @@
 # GitHub Publishing
 
-The local repository scaffold is ready and committed.
+The initial repository has been published to GitHub.
 
-## Current local status
+## Current status
 
 - Local path: `adaptive-model-router/`
 - Branch: `main`
-- Initial commit: `1f65433 Initial open-source scaffold`
-- Current remote: `git@github.com:guangyang1206/adaptive-model-router.git`
-- Target repository: `https://github.com/guangyang1206/adaptive-model-router`
+- Remote: `git@github.com:guangyang1206/adaptive-model-router.git`
+- GitHub repository: `https://github.com/guangyang1206/adaptive-model-router`
+- Visibility: Public
+- License: Apache-2.0
 
 ## SSH check result
 
@@ -18,22 +19,11 @@ This Mac has GitHub SSH keys and SSH authentication works:
 Hi guangyang1206! You've successfully authenticated, but GitHub does not provide shell access.
 ```
 
-The repository itself does not exist yet on GitHub, so `git ls-remote origin` returns:
+The local repository uses the SSH remote, so future pushes can use:
 
-```text
-ERROR: Repository not found.
-fatal: Could not read from remote repository.
+```bash
+git push
 ```
-
-SSH can authenticate and push to an existing repository, but it cannot create a new GitHub repository by itself. The GitHub repository must be created once via GitHub web UI, GitHub CLI, or API.
-
-## Recommended repository settings
-
-- Owner: `guangyang1206`
-- Repository name: `adaptive-model-router`
-- Visibility: Public
-- License: Apache-2.0
-- Default branch: `main`
 
 ## Repository description
 
@@ -47,33 +37,22 @@ SDK-first adaptive model router for agent apps, with quality-gated routing, fall
 agent llm model-router adaptive-routing typescript openai anthropic deepseek ollama fallback observability
 ```
 
-## Publish via GitHub web UI
+## First published commits
 
-1. Open GitHub and create a new public repository named `adaptive-model-router` under `guangyang1206`.
-2. Do not initialize it with README, license, or `.gitignore` because this scaffold already includes them.
-3. From the local repository directory, run:
-
-```bash
-git push -u origin main
+```text
+1f65433 Initial open-source scaffold
+266234e Document GitHub publishing steps
+e8cf03e Document SSH publishing status
 ```
 
-Because the remote is already set to SSH, no HTTPS token should be needed if your SSH key remains authorized.
+A final publishing-status documentation commit was added after the repository became available.
 
-## Publish with GitHub CLI if installed later
+## Next recommended GitHub setup
 
-If `gh` becomes available, run from the local repository directory:
+After publishing, configure the repository settings on GitHub:
 
-```bash
-gh auth login
-gh repo create guangyang1206/adaptive-model-router --public --source=. --remote=origin --push
-```
-
-If the remote already exists, use:
-
-```bash
-git push -u origin main
-```
-
-## Current blocker
-
-The only remaining blocker is repository creation on GitHub. After the empty public repository exists, the local repo is ready to push over SSH.
+1. Add the repository description above.
+2. Add the suggested topics.
+3. Confirm the default branch is `main`.
+4. Enable branch protection after CI is stable.
+5. Review GitHub Actions CI after the first push.
