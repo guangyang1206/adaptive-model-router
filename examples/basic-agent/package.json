@@ -7,6 +7,7 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
+    "@adaptive-router/dashboard": "workspace:*",
     "@adaptive-router/sdk": "workspace:*"
   },
   "devDependencies": {

@@ -11,6 +11,7 @@ pnpm add @adaptive-router/sdk
 ## 2. 初始化 Router
 
 ```ts
+import { createDashboard, createReadOnlyDataAccess } from '@adaptive-router/dashboard'
 import {
   createAnthropicProvider,
   createDeepSeekProvider,
@@ -60,7 +61,14 @@ console.log(result.routerTrace)
 ## 4. 打开本地 Dashboard
 
 ```ts
-const dashboard = await router.dashboard({ port: 4318 })
+const dashboard = await createDashboard({
+  port: 4318,
+  data: createReadOnlyDataAccess({
+    listTraces: () => router.traces(),
+    listModels: () => router.models(),
+  }),
+})
+
 console.log(dashboard.url)
 ```
 

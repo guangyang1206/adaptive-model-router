@@ -1,3 +1,4 @@
+import { createDashboard, createReadOnlyDataAccess } from "@adaptive-router/dashboard"
 import {
   createAnthropicProvider,
   createDeepSeekProvider,
@@ -46,3 +47,14 @@ const result = await router.chat({
 })
 
 console.log(JSON.stringify(result.routerTrace, null, 2))
+
+const dashboard = await createDashboard({
+  port: 4318,
+  data: createReadOnlyDataAccess({
+    listTraces: () => router.traces(),
+    listModels: () => router.models(),
+  }),
+})
+
+console.log(`Dashboard: ${dashboard.url}`)
+console.log("Press Ctrl+C to stop the local dashboard.")

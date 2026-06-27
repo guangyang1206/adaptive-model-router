@@ -50,6 +50,7 @@ The first milestone is intentionally small:
 ## Example API
 
 ```ts
+import { createDashboard, createReadOnlyDataAccess } from '@adaptive-router/dashboard'
 import {
   createAnthropicProvider,
   createDeepSeekProvider,
@@ -92,6 +93,15 @@ const result = await router.chat({
 })
 
 console.log(result.routerTrace)
+
+const dashboard = await createDashboard({
+  data: createReadOnlyDataAccess({
+    listTraces: () => router.traces(),
+    listModels: () => router.models(),
+  }),
+})
+
+console.log(dashboard.url)
 ```
 
 ## Documentation
