@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible problem in Adaptive Model Router.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Adaptive Model Router. Please avoid sharing real API keys, prompts with private data, or secrets.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+      placeholder: The router selected no candidate when...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps to reproduce.
+      placeholder: |
+        1. Configure provider...
+        2. Run router.chat...
+        3. See error...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or routerTrace
+      description: Redact secrets and private prompts.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: 9c1b244
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - SDK routing
+        - Provider adapter
+        - Storage
+        - Dashboard
+        - CLI
+        - Docs
+        - CI
+    validations:
+      required: true

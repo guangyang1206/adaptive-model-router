@@ -1,0 +1,39 @@
+name: Provider adapter request
+description: Request or propose support for a model provider.
+title: "provider: "
+labels: [provider, help wanted]
+body:
+  - type: input
+    id: provider
+    attributes:
+      label: Provider name
+      placeholder: Qwen, Gemini, vLLM, SGLang...
+    validations:
+      required: true
+  - type: input
+    id: api_style
+    attributes:
+      label: API style
+      placeholder: OpenAI-compatible, native REST API, local server...
+    validations:
+      required: true
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: Supported capabilities
+      description: Which capabilities should the adapter expose?
+      placeholder: reasoning, tool-calling, json-mode, vision, streaming, embeddings
+    validations:
+      required: true
+  - type: textarea
+    id: docs
+    attributes:
+      label: Official docs or references
+      description: Link to public docs if available.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Known quirks, usage response format, error format, or pricing.

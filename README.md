@@ -122,6 +122,7 @@ The CLI helps initialize local config, check provider environment variables, ins
 - [English API Reference](docs/en/api-reference.md)
 - [中文 API 参考](docs/zh/api-reference.md)
 - [Roadmap](ROADMAP.md)
+- [Contributor Tasks](CONTRIBUTOR_TASKS.md)
 
 ## Status
 

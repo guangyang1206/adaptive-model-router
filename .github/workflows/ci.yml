@@ -7,17 +7,44 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile=false
-      - run: pnpm typecheck
-      - run: pnpm build
+          node-version: 22
+
+      - name: Install TypeScript locally
+        run: npm install --no-save typescript@^5.6.0
+
+      - name: Build SDK
+        run: npx tsc -p packages/sdk/tsconfig.json
+
+      - name: Build Dashboard
+        run: npx tsc -p packages/dashboard/tsconfig.json
+
+      - name: Build CLI
+        run: npx tsc -p packages/cli/tsconfig.json
+
+      - name: Run SDK tests
+        run: node --test packages/sdk/test/index.test.mjs packages/sdk/test/storage.test.mjs
+
+      - name: Run CLI smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMPDIR="$(mktemp -d)"
+          node packages/cli/dist/index.js init --cwd "$TMPDIR"
+          node packages/cli/dist/index.js doctor --cwd "$TMPDIR"
+          printf '{"event_type":"request_finished","schema_version":"1.0","request_id":"trace_demo","decision_id":"decision_demo","timestamp":"2026-06-27T00:00:00.000Z","payload":{"traceId":"trace_demo","decisionId":"decision_demo","status":"success","chosenModel":"local/demo","reason":"demo","attempts":[{"status":"success","provider":"local","modelId":"local/demo"}],"usage":{"totalTokens":12,"costUsd":0,"estimated":true},"estimated":true,"latencyMs":10}}\n' > "$TMPDIR/.adaptive-router/router.jsonl"
+          node packages/cli/dist/index.js inspect --cwd "$TMPDIR"
+          node packages/cli/dist/index.js export --cwd "$TMPDIR" --out "$TMPDIR/export.json"
+          test -f "$TMPDIR/export.json"
+
+      - name: Run dashboard smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module -e "import { createDashboard, createReadOnlyDataAccess } from './packages/dashboard/dist/index.js'; const traces=[{traceId:'trace_demo',decisionId:'decision_demo',chosenModel:'local/demo',candidates:[],reason:'demo route',attempts:[{status:'success',latencyMs:12}],usage:{totalTokens:12,costUsd:0,estimated:true},estimated:true,latencyMs:12,status:'success'}]; const models=[{id:'local/demo',provider:'local',type:'self-hosted',capabilities:['reasoning'],health:{status:'ok'},enabled:true}]; const dash=await createDashboard({port:4329,data:createReadOnlyDataAccess({listTraces:()=>traces,listModels:()=>models})}); const summary=await fetch(dash.url + '/api/metrics/summary').then(r=>r.json()); const html=await fetch(dash.url + '/requests').then(r=>r.text()); if(summary.code!=='OK'||!html.includes('Routing Decisions')) throw new Error('dashboard smoke failed'); await dash.close(); console.log('dashboard smoke passed');"
