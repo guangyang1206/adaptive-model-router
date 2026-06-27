@@ -1,0 +1,23 @@
+{
+  "name": "@adaptive-router/cli",
+  "version": "0.0.0",
+  "description": "Developer CLI for Adaptive Model Router.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "adaptive-router": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/**/*.test.mjs",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

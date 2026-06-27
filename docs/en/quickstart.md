@@ -72,6 +72,17 @@ const dashboard = await createDashboard({
 console.log(dashboard.url)
 ```
 
+## 5. Use the CLI
+
+```bash
+adaptive-router init
+adaptive-router doctor
+adaptive-router inspect
+adaptive-router export --out .adaptive-router/diagnostic-export.json
+```
+
+The CLI initializes config, checks provider environment variables, summarizes JSONL traces, and exports local diagnostics.
+
 ## MVP limitation
 
 MVP-0 does not judge answer quality in real time. Quality is represented by capability match, configured model tier, and health/success signals.

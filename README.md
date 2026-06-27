@@ -104,6 +104,17 @@ const dashboard = await createDashboard({
 console.log(dashboard.url)
 ```
 
+## CLI MVP
+
+```bash
+adaptive-router init
+adaptive-router doctor
+adaptive-router inspect
+adaptive-router export --out .adaptive-router/diagnostic-export.json
+```
+
+The CLI helps initialize local config, check provider environment variables, inspect JSONL trace summaries, and export diagnostics.
+
 ## Documentation
 
 - [English Quickstart](docs/en/quickstart.md)

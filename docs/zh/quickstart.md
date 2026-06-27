@@ -72,6 +72,17 @@ const dashboard = await createDashboard({
 console.log(dashboard.url)
 ```
 
+## 5. 使用 CLI
+
+```bash
+adaptive-router init
+adaptive-router doctor
+adaptive-router inspect
+adaptive-router export --out .adaptive-router/diagnostic-export.json
+```
+
+CLI 用于初始化配置、检查 provider 环境变量、汇总 JSONL traces，并导出本地诊断包。
+
 ## MVP 限制
 
 MVP-0 不实时判断回答质量。质量仅由能力匹配、模型档位、健康状态和历史成功信号表达。
