@@ -7,15 +7,25 @@ The local repository scaffold is ready and committed.
 - Local path: `adaptive-model-router/`
 - Branch: `main`
 - Initial commit: `1f65433 Initial open-source scaffold`
-- Remote configured: `https://github.com/guangyang1206/adaptive-model-router.git`
+- Current remote: `git@github.com:guangyang1206/adaptive-model-router.git`
 - Target repository: `https://github.com/guangyang1206/adaptive-model-router`
 
-GitHub publishing could not be completed automatically in this environment because:
+## SSH check result
 
-- `gh` CLI is not installed in the shell.
-- No `GITHUB_TOKEN` or `GH_TOKEN` environment variable is available.
-- GitHub connector is disconnected.
-- `git ls-remote` requires interactive credentials, but terminal prompts are disabled.
+This Mac has GitHub SSH keys and SSH authentication works:
+
+```text
+Hi guangyang1206! You've successfully authenticated, but GitHub does not provide shell access.
+```
+
+The repository itself does not exist yet on GitHub, so `git ls-remote origin` returns:
+
+```text
+ERROR: Repository not found.
+fatal: Could not read from remote repository.
+```
+
+SSH can authenticate and push to an existing repository, but it cannot create a new GitHub repository by itself. The GitHub repository must be created once via GitHub web UI, GitHub CLI, or API.
 
 ## Recommended repository settings
 
@@ -47,6 +57,8 @@ agent llm model-router adaptive-routing typescript openai anthropic deepseek oll
 git push -u origin main
 ```
 
+Because the remote is already set to SSH, no HTTPS token should be needed if your SSH key remains authorized.
+
 ## Publish with GitHub CLI if installed later
 
 If `gh` becomes available, run from the local repository directory:
@@ -62,12 +74,6 @@ If the remote already exists, use:
 git push -u origin main
 ```
 
-## Publish with a token
+## Current blocker
 
-If using HTTPS with a personal access token, create the repository on GitHub first, then run:
-
-```bash
-git push -u origin main
-```
-
-When prompted, use your GitHub username and token.
+The only remaining blocker is repository creation on GitHub. After the empty public repository exists, the local repo is ready to push over SSH.
