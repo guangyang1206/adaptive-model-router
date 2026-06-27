@@ -1,53 +1,35 @@
 # Adaptive Model Router
 
+[![CI](https://github.com/guangyang1206/adaptive-model-router/actions/workflows/ci.yml/badge.svg)](https://github.com/guangyang1206/adaptive-model-router/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![Node.js >=20](https://img.shields.io/badge/Node.js-%3E%3D20-339933.svg)](package.json)
+[![MVP-0](https://img.shields.io/badge/status-MVP--0-2563EB.svg)](ROADMAP.md)
+
 > An adaptive model router for agent apps — automatically balancing quality, stability, latency, and token cost.
 
 Adaptive Model Router is an SDK-first open-source developer tool for Agent applications. It embeds model routing into your agent runtime, chooses a model based on task context and capability constraints, records fallback attempts, and explains each routing decision in a local dashboard.
-
-## Why this exists
-
-Agent apps often need different models for different steps: planning, tool calling, coding, extraction, summarization, and final answers. Hard-coding one model is either expensive or unreliable. Existing gateways are useful, but they often sit outside the agent loop and cannot easily see agent step metadata.
-
-This project focuses on an embeddable routing layer:
 
 ```text
 Install SDK -> Initialize Router -> Send Agent Request -> Route by Quality/Stability -> Inspect Decision in Dashboard
 ```
 
-## MVP-0 scope
+## Why this exists
 
-The first milestone is intentionally small:
+Agent apps often need different models for different steps: planning, tool calling, coding, extraction, summarization, and final answers. Hard-coding one model is either expensive or unreliable. Existing gateways are useful, but they often sit outside the agent loop and cannot easily see agent step metadata.
 
-- TypeScript SDK-first, not proxy-first
-- Quality-gated routing based on capability, tier, health, and success signals
-- Fallback / retry / timeout for non-streaming requests
-- No mid-stream fallback after streaming has started
-- Local read-only dashboard with two pages:
-  - Requests / Routing Decisions
-  - Models
-- SQLite storage with JSONL fallback
-- First provider set: OpenAI, Anthropic, DeepSeek, Ollama
-- English-first bilingual docs: README, Quickstart, API Reference
+Adaptive Model Router focuses on an embeddable routing layer that can see agent context and make explainable routing decisions.
 
-## Non-goals for MVP-0
+## What MVP-0 can do
 
-- No hosted SaaS dashboard
-- No RBAC, multi-tenant orgs, audit logs, or billing
-- No model marketplace
-- No real-time judgment of answer quality
-- No learning router or eval-driven routing yet
-- No full provider coverage
-- No local proxy in MVP-0
+- Route agent requests through a TypeScript SDK
+- Score candidates by capability, model tier, health/success signal, latency, and cost
+- Fall back on retryable non-streaming failures
+- Normalize OpenAI, Anthropic, DeepSeek, and Ollama provider calls
+- Store traces with SQLite or JSONL fallback
+- Open a local read-only dashboard with Requests and Models pages
+- Inspect/export traces from a small CLI
 
-## Package plan
-
-```text
-@adaptive-router/sdk        Runtime SDK, policy, providers, storage, telemetry
-@adaptive-router/dashboard  Local read-only dashboard
-@adaptive-router/cli        Optional developer helper commands
-```
-
-## Example API
+## Quick demo
 
 ```ts
 import { createDashboard, createReadOnlyDataAccess } from '@adaptive-router/dashboard'
@@ -104,6 +86,30 @@ const dashboard = await createDashboard({
 console.log(dashboard.url)
 ```
 
+## Architecture
+
+```mermaid
+flowchart LR
+  A[Agent App] --> B[Adaptive Router SDK]
+  B --> C[Policy Engine]
+  C --> D[Provider Adapters]
+  D --> D1[OpenAI]
+  D --> D2[Anthropic]
+  D --> D3[DeepSeek]
+  D --> D4[Ollama]
+  B --> E[Trace Store]
+  E --> E1[SQLite]
+  E --> E2[JSONL fallback]
+  E --> F[Read-only Dashboard]
+  F --> F1[Requests / Routing Decisions]
+  F --> F2[Models]
+  B --> G[CLI]
+  G --> G1[init]
+  G --> G2[doctor]
+  G --> G3[inspect]
+  G --> G4[export]
+```
+
 ## CLI MVP
 
 ```bash
@@ -115,6 +121,67 @@ adaptive-router export --out .adaptive-router/diagnostic-export.json
 
 The CLI helps initialize local config, check provider environment variables, inspect JSONL trace summaries, and export diagnostics.
 
+## MVP-0 scope
+
+The first milestone is intentionally small:
+
+- TypeScript SDK-first, not proxy-first
+- Quality-gated routing based on capability, tier, health, and success signals
+- Fallback / retry / timeout for non-streaming requests
+- No mid-stream fallback after streaming has started
+- Local read-only dashboard with two pages:
+  - Requests / Routing Decisions
+  - Models
+- SQLite storage with JSONL fallback
+- First provider set: OpenAI, Anthropic, DeepSeek, Ollama
+- English-first bilingual docs: README, Quickstart, API Reference
+
+## Non-goals for MVP-0
+
+- No hosted SaaS dashboard
+- No RBAC, multi-tenant orgs, audit logs, or billing
+- No model marketplace
+- No real-time judgment of answer quality
+- No learning router or eval-driven routing yet
+- No full provider coverage
+- No local proxy in MVP-0
+
+## Package plan
+
+```text
+@adaptive-router/sdk        Runtime SDK, policy, providers, storage, telemetry
+@adaptive-router/dashboard  Local read-only dashboard
+@adaptive-router/cli        Developer helper commands
+```
+
+## Roadmap
+
+| Stage | Focus | Status |
+|---|---|---|
+| MVP-0 | SDK routing, providers, durable storage, local dashboard, CLI | In progress |
+| MVP-1 | Framework adapters, more providers, policy dry-run UI | Planned |
+| MVP-2 | Eval harness, route learning, cache, context compression | Planned |
+| MVP-3 | Team / enterprise / SaaS control plane | Future |
+
+See [ROADMAP.md](ROADMAP.md) for details.
+
+## Contributing
+
+Start here:
+
+- [Contributor Tasks](CONTRIBUTOR_TASKS.md)
+- [Good first issue drafts](.github/ISSUE_DRAFTS/README.md)
+- [Contributing Guide](CONTRIBUTING.md)
+
+Useful starter areas:
+
+- routing policy examples
+- dashboard empty states
+- CLI help snapshots
+- Qwen / Gemini / vLLM provider adapters
+- SQLite compatibility
+- CI matrix expansion
+
 ## Documentation
 
 - [English Quickstart](docs/en/quickstart.md)
@@ -122,11 +189,14 @@ The CLI helps initialize local config, check provider environment variables, ins
 - [English API Reference](docs/en/api-reference.md)
 - [中文 API 参考](docs/zh/api-reference.md)
 - [Roadmap](ROADMAP.md)
-- [Contributor Tasks](CONTRIBUTOR_TASKS.md)
 
 ## Status
 
-This repository is being initialized from the MVP specification. The current code is a scaffold for the first open-source milestone.
+This repository is an early MVP. The current priority is proving a small but complete developer loop:
+
+```text
+init config -> route agent request -> store traces -> inspect dashboard -> export diagnostics
+```
 
 ## License
 
