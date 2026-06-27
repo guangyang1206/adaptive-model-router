@@ -50,10 +50,21 @@ The first milestone is intentionally small:
 ## Example API
 
 ```ts
-import { createRouter } from '@adaptive-router/sdk'
+import {
+  createAnthropicProvider,
+  createDeepSeekProvider,
+  createOllamaProvider,
+  createOpenAIProvider,
+  createRouter,
+} from '@adaptive-router/sdk'
 
 const router = createRouter({
-  providers: [],
+  providers: [
+    createOpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
+    createAnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY }),
+    createDeepSeekProvider({ apiKey: process.env.DEEPSEEK_API_KEY }),
+    createOllamaProvider({ baseURL: process.env.OLLAMA_BASE_URL }),
+  ],
   policy: {
     defaultQuality: 'balanced',
     stability: 'high',

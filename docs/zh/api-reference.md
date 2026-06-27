@@ -48,6 +48,24 @@ await wrapped.chat?.completions?.create({
 })
 ```
 
+## Provider factories
+
+MVP-0 包含四个 provider adapter 工厂函数：
+
+```ts
+createOpenAIProvider({ apiKey, baseURL?, models?, timeoutMs? })
+createAnthropicProvider({ apiKey, baseURL?, models?, timeoutMs? })
+createDeepSeekProvider({ apiKey, baseURL?, models?, timeoutMs? })
+createOllamaProvider({ baseURL?, models?, timeoutMs? })
+```
+
+默认 base URL：
+
+- OpenAI: `https://api.openai.com/v1`
+- Anthropic: `https://api.anthropic.com/v1`
+- DeepSeek: `https://api.deepseek.com/v1`
+- Ollama: `http://localhost:11434`
+
 ## `router.dashboard(options)`
 
 返回本地 Dashboard URL。

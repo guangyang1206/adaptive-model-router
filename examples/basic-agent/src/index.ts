@@ -1,22 +1,36 @@
-import { createRouter, createStaticProvider } from "@adaptive-router/sdk"
+import {
+  createAnthropicProvider,
+  createDeepSeekProvider,
+  createOllamaProvider,
+  createOpenAIProvider,
+  createRouter,
+  createStaticProvider,
+} from "@adaptive-router/sdk"
+
+const providers = [
+  process.env.OPENAI_API_KEY ? createOpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }) : undefined,
+  process.env.ANTHROPIC_API_KEY ? createAnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY }) : undefined,
+  process.env.DEEPSEEK_API_KEY ? createDeepSeekProvider({ apiKey: process.env.DEEPSEEK_API_KEY }) : undefined,
+  createOllamaProvider({ baseURL: process.env.OLLAMA_BASE_URL }),
+].filter(Boolean)
+
+const fallbackProvider = createStaticProvider("local", [
+  {
+    id: "local/scaffold-model",
+    provider: "local",
+    model: "scaffold-model",
+    type: "self-hosted",
+    kind: "self-hosted",
+    capabilities: ["reasoning", "streaming"],
+    tier: "balanced",
+    contextWindow: 8192,
+    enabled: true,
+    health: { status: "ok", successRate: 1 },
+  },
+])
 
 const router = createRouter({
-  providers: [
-    createStaticProvider("local", [
-      {
-        id: "local/scaffold-model",
-        provider: "local",
-        model: "scaffold-model",
-        type: "self-hosted",
-        kind: "self-hosted",
-        capabilities: ["reasoning", "streaming"],
-        tier: "balanced",
-        contextWindow: 8192,
-        enabled: true,
-        health: { status: "ok", successRate: 1 },
-      },
-    ]),
-  ],
+  providers: providers.length > 0 ? providers : [fallbackProvider],
 })
 
 const result = await router.chat({

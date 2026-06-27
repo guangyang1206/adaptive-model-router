@@ -48,6 +48,24 @@ await wrapped.chat?.completions?.create({
 })
 ```
 
+## Provider factories
+
+MVP-0 includes four provider adapter factories:
+
+```ts
+createOpenAIProvider({ apiKey, baseURL?, models?, timeoutMs? })
+createAnthropicProvider({ apiKey, baseURL?, models?, timeoutMs? })
+createDeepSeekProvider({ apiKey, baseURL?, models?, timeoutMs? })
+createOllamaProvider({ baseURL?, models?, timeoutMs? })
+```
+
+Default base URLs:
+
+- OpenAI: `https://api.openai.com/v1`
+- Anthropic: `https://api.anthropic.com/v1`
+- DeepSeek: `https://api.deepseek.com/v1`
+- Ollama: `http://localhost:11434`
+
 ## `router.dashboard(options)`
 
 Returns the local dashboard URL.
