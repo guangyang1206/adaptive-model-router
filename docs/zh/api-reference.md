@@ -26,13 +26,35 @@ const result = await router.chat({ messages, tools, route })
 const evaluation = await router.evaluate({ messages, route })
 ```
 
+返回排序后的候选模型、跳过原因和可读解释。
+
+## `router.traces()`
+
+返回当前 store 记录的 trace。MVP 默认 store 为内存存储。
+
+```ts
+const traces = await router.traces()
+```
+
 ## `router.wrapOpenAI(client)`
 
-计划中的 OpenAI-like client 兼容包装器。
+包装 OpenAI-compatible client，并将 `chat.completions.create()` 调用路由到 Adaptive Model Router。
+
+```ts
+const wrapped = router.wrapOpenAI(openaiLikeClient)
+await wrapped.chat?.completions?.create({
+  messages,
+  metadata: { route: { task: 'plan', quality: 'high' } },
+})
+```
 
 ## `router.dashboard(options)`
 
-启动或返回本地 Dashboard URL。
+返回本地 Dashboard URL。
+
+```ts
+const dashboard = await router.dashboard({ port: 4318 })
+```
 
 ## 错误码
 

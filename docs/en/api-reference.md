@@ -26,13 +26,35 @@ Dry-runs routing without calling a model.
 const evaluation = await router.evaluate({ messages, route })
 ```
 
+The evaluation result includes sorted candidates, skipped candidates, and human-readable reasons.
+
+## `router.traces()`
+
+Returns traces recorded by the configured store. The default MVP store is in-memory.
+
+```ts
+const traces = await router.traces()
+```
+
 ## `router.wrapOpenAI(client)`
 
-Planned compatibility wrapper for OpenAI-like clients.
+Wraps an OpenAI-compatible client shape and routes `chat.completions.create()` calls through Adaptive Model Router.
+
+```ts
+const wrapped = router.wrapOpenAI(openaiLikeClient)
+await wrapped.chat?.completions?.create({
+  messages,
+  metadata: { route: { task: 'plan', quality: 'high' } },
+})
+```
 
 ## `router.dashboard(options)`
 
-Starts or returns the local dashboard URL.
+Returns the local dashboard URL.
+
+```ts
+const dashboard = await router.dashboard({ port: 4318 })
+```
 
 ## Error codes
 

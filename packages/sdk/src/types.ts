@@ -36,6 +36,7 @@ export type ModelProfile = {
     currency?: "USD"
     estimated?: boolean
   }
+  latencyClass?: "low" | "medium" | "high" | "unknown"
   health?: ProviderHealth
 }
 
@@ -59,10 +60,7 @@ export type RouterConfig = {
   providers: ProviderAdapter[]
   models?: ModelProfile[]
   policy?: RoutePolicy
-  store?: {
-    type: "sqlite" | "jsonl" | "memory"
-    path?: string
-  }
+  store?: TraceStore
 }
 
 export type RouteRequest = {
@@ -96,6 +94,7 @@ export type RouteAttempt = {
   provider: string
   status: "success" | "failed" | "skipped"
   errorCode?: AdaptiveRouterErrorCode
+  errorType?: string
   latencyMs?: number
 }
 
@@ -121,17 +120,39 @@ export type RouterTrace = {
   status: "success" | "failed" | "fallback_success"
 }
 
-export type RouteResult<TResponse = unknown> = {
+export type RouteResult<TResponse = ProviderResponse> = {
   response: TResponse
   routerTrace: RouterTrace
+}
+
+export type OpenAICompatibleClient = {
+  chat?: {
+    completions?: {
+      create(request: Record<string, unknown>): Promise<unknown>
+    }
+  }
+}
+
+export type ProviderResponse = {
+  id?: string
+  model?: string
+  choices?: unknown[]
+  content?: string
+  usage?: Usage
+  raw?: unknown
 }
 
 export type ProviderAdapter = {
   id: string
   kind: ProviderKind
   listModels(): Promise<ModelProfile[]>
-  chat(request: RouteRequest, model: ModelProfile): Promise<unknown>
+  chat(request: RouteRequest, model: ModelProfile): Promise<ProviderResponse>
   normalizeError(error: unknown): AdaptiveRouterError
+}
+
+export type TraceStore = {
+  writeTrace(trace: RouterTrace): Promise<void> | void
+  listTraces?(): Promise<RouterTrace[]> | RouterTrace[]
 }
 
 export type AdaptiveRouterErrorCode =
