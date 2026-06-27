@@ -17,7 +17,13 @@ import {
   createOllamaProvider,
   createOpenAIProvider,
   createRouter,
+  createSQLiteTraceStore,
 } from '@adaptive-router/sdk'
+
+const store = await createSQLiteTraceStore({
+  path: '.adaptive-router/router.db',
+  fallbackPath: '.adaptive-router/router.jsonl',
+})
 
 const router = createRouter({
   providers: [
@@ -31,6 +37,7 @@ const router = createRouter({
     stability: 'high',
     costMode: 'optimize-within-quality-threshold',
   },
+  store,
 })
 ```
 

@@ -4,6 +4,7 @@ import {
   createOllamaProvider,
   createOpenAIProvider,
   createRouter,
+  createSQLiteTraceStore,
   createStaticProvider,
 } from "@adaptive-router/sdk"
 
@@ -29,8 +30,14 @@ const fallbackProvider = createStaticProvider("local", [
   },
 ])
 
+const store = await createSQLiteTraceStore({
+  path: ".adaptive-router/router.db",
+  fallbackPath: ".adaptive-router/router.jsonl",
+})
+
 const router = createRouter({
   providers: providers.length > 0 ? providers : [fallbackProvider],
+  store,
 })
 
 const result = await router.chat({

@@ -74,6 +74,21 @@ createOllamaProvider({ baseURL?, models?, timeoutMs? })
 const dashboard = await router.dashboard({ port: 4318 })
 ```
 
+## Storage
+
+MVP durable storage 包含 JSONL store，以及带 JSONL fallback 的异步 SQLite store。
+
+```ts
+const jsonlStore = createJsonlTraceStore({ path: '.adaptive-router/router.jsonl' })
+
+const sqliteStore = await createSQLiteTraceStore({
+  path: '.adaptive-router/router.db',
+  fallbackPath: '.adaptive-router/router.jsonl',
+})
+```
+
+`createSQLiteTraceStore()` 会在可用时使用 Node 内置 `node:sqlite`。如果 SQLite 不可用且提供了 `fallbackPath`，会降级到 JSONL。
+
 ## 错误码
 
 - `AR_NO_CANDIDATE`

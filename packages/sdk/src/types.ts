@@ -155,6 +155,33 @@ export type TraceStore = {
   listTraces?(): Promise<RouterTrace[]> | RouterTrace[]
 }
 
+export type TraceStoreSummary = {
+  totalRequests: number
+  successRate: number
+  fallbackCount: number
+  estimatedCostUsd: number
+  medianLatencyMs?: number
+}
+
+export type StoredRequest = {
+  traceId: string
+  decisionId: string
+  status: RouterTrace["status"]
+  chosenModel?: string
+  reason: string
+  attempts: RouteAttempt[]
+  usage?: Usage
+  estimated: boolean
+  latencyMs?: number
+  createdAt?: string
+}
+
+export type TraceStoreReader = TraceStore & {
+  getSummary?(): Promise<TraceStoreSummary> | TraceStoreSummary
+  listRequests?(): Promise<StoredRequest[]> | StoredRequest[]
+  getRequest?(traceId: string): Promise<StoredRequest | undefined> | StoredRequest | undefined
+}
+
 export type AdaptiveRouterErrorCode =
   | "AR_NO_CANDIDATE"
   | "AR_PROVIDER_AUTH_FAILED"

@@ -74,6 +74,21 @@ Returns the local dashboard URL.
 const dashboard = await router.dashboard({ port: 4318 })
 ```
 
+## Storage
+
+MVP durable storage includes a JSONL store and an async SQLite store with JSONL fallback.
+
+```ts
+const jsonlStore = createJsonlTraceStore({ path: '.adaptive-router/router.jsonl' })
+
+const sqliteStore = await createSQLiteTraceStore({
+  path: '.adaptive-router/router.db',
+  fallbackPath: '.adaptive-router/router.jsonl',
+})
+```
+
+`createSQLiteTraceStore()` uses Node's built-in `node:sqlite` when available. If SQLite is unavailable and `fallbackPath` is provided, it falls back to JSONL.
+
 ## Error codes
 
 - `AR_NO_CANDIDATE`
