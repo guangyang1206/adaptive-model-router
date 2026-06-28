@@ -29,6 +29,18 @@ Adaptive Model Router focuses on an embeddable routing layer that can see agent 
 - Open a local read-only dashboard with Requests and Models pages
 - Inspect/export traces from a small CLI
 
+## Dashboard demo
+
+![Adaptive Model Router dashboard showing routing decisions and fallback trace data](docs/assets/dashboard-demo.png)
+
+[Watch the short dashboard recording](docs/assets/dashboard-demo.webm)
+
+The screenshot above is captured from the real local dashboard with seeded route traces. You can regenerate the demo locally after building the dashboard package:
+
+```bash
+node scripts/preview-dashboard-demo.mjs
+```
+
 ## Quick demo
 
 ```ts
