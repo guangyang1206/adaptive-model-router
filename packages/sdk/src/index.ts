@@ -26,13 +26,22 @@ export type EvaluationResult = {
   reason: string
 }
 
+export type DashboardHandle = {
+  /** The URL the dashboard would be served at. */
+  url: string
+  /** Always false: the SDK does not start an HTTP server itself. */
+  started: boolean
+  /** Guidance on how to actually launch the dashboard server. */
+  hint: string
+}
+
 export type AdaptiveRouter = {
   chat(request: RouteRequest): Promise<RouteResult>
   evaluate(request: RouteRequest): Promise<EvaluationResult>
   models(): Promise<ModelProfile[]>
   traces(): Promise<RouterTrace[]>
   wrapOpenAI(client: OpenAICompatibleClient): OpenAICompatibleClient
-  dashboard(options?: { port?: number }): Promise<{ url: string }>
+  dashboard(options?: { port?: number }): Promise<DashboardHandle>
 }
 
 export function createRouter(config: RouterConfig): AdaptiveRouter {
@@ -163,9 +172,18 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
     }
   }
 
-  async function dashboard(options?: { port?: number }): Promise<{ url: string }> {
+  async function dashboard(options?: { port?: number }): Promise<DashboardHandle> {
     const port = options?.port ?? 4318
-    return { url: `http://localhost:${port}` }
+    // NOTE: The SDK intentionally does not depend on the dashboard server package,
+    // so this method does NOT start an HTTP server. It only computes the URL the
+    // dashboard *would* be served at. To actually launch the dashboard, install
+    // `@adaptive-router/dashboard` and call its `createDashboard({ port, data })`,
+    // feeding it the router's traces via `createReadOnlyDataAccess`.
+    return {
+      url: `http://localhost:${port}`,
+      started: false,
+      hint: "createRouter().dashboard() does not start a server. Use @adaptive-router/dashboard's createDashboard({ port, data }) to launch it.",
+    }
   }
 
   return { chat, evaluate, models, traces, wrapOpenAI, dashboard }

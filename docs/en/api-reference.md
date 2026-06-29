@@ -68,10 +68,25 @@ Default base URLs:
 
 ## `router.dashboard(options)`
 
-Returns the local dashboard URL.
+Computes the URL the local dashboard would be served at. **It does not start an HTTP server** — the SDK does not depend on the dashboard package. The returned handle has `started: false` and a `hint` explaining how to launch the real server.
 
 ```ts
-const dashboard = await router.dashboard({ port: 4318 })
+const handle = await router.dashboard({ port: 4318 })
+// handle.url => "http://localhost:4318"
+// handle.started => false
+```
+
+To actually run the dashboard, install `@adaptive-router/dashboard` and start it with the router's traces:
+
+```ts
+import { createDashboard, createReadOnlyDataAccess } from '@adaptive-router/dashboard'
+
+const traces = await router.traces()
+const running = await createDashboard({
+  port: 4318,
+  data: createReadOnlyDataAccess({ listTraces: () => traces, listModels: () => [] }),
+})
+// running.url is now a live server
 ```
 
 ## Storage

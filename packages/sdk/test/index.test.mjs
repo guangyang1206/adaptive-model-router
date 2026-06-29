@@ -80,3 +80,25 @@ test("router records traces in memory store", async () => {
   assert.equal(traces.length, 1)
   assert.equal(traces[0]?.status, "success")
 })
+
+test("dashboard() returns an honest non-started handle", async () => {
+  const router = createRouter({ providers: [createStaticProvider("local", [cheapModel])] })
+
+  const handle = await router.dashboard({ port: 4321 })
+  assert.equal(handle.url, "http://localhost:4321")
+  assert.equal(handle.started, false)
+  assert.match(handle.hint, /createDashboard/)
+})
+
+test("usage estimate scales with total message content length", async () => {
+  const router = createRouter({ providers: [createStaticProvider("local", [cheapModel])] })
+
+  const short = await router.chat({ messages: [{ role: "user", content: "hi" }] })
+  const long = await router.chat({
+    messages: [{ role: "user", content: "x".repeat(4000) }],
+  })
+
+  const shortInput = short.routerTrace.usage?.inputTokens ?? 0
+  const longInput = long.routerTrace.usage?.inputTokens ?? 0
+  assert.ok(longInput > shortInput * 10, `expected long input (${longInput}) to dwarf short input (${shortInput})`)
+})

@@ -68,10 +68,25 @@ createOllamaProvider({ baseURL?, models?, timeoutMs? })
 
 ## `router.dashboard(options)`
 
-返回本地 Dashboard URL。
+计算本地 Dashboard 将要服务的 URL。**它不会启动 HTTP 服务**——SDK 不依赖 dashboard 包。返回的 handle 中 `started` 为 `false`，并带有提示如何真正启动服务。
 
 ```ts
-const dashboard = await router.dashboard({ port: 4318 })
+const handle = await router.dashboard({ port: 4318 })
+// handle.url => "http://localhost:4318"
+// handle.started => false
+```
+
+如需真正运行 Dashboard，请安装 `@adaptive-router/dashboard` 并用 router 的 traces 启动：
+
+```ts
+import { createDashboard, createReadOnlyDataAccess } from '@adaptive-router/dashboard'
+
+const traces = await router.traces()
+const running = await createDashboard({
+  port: 4318,
+  data: createReadOnlyDataAccess({ listTraces: () => traces, listModels: () => [] }),
+})
+// running.url 现在是一个真实运行的服务
 ```
 
 ## Storage
