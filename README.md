@@ -24,7 +24,7 @@ Adaptive Model Router focuses on an embeddable routing layer that can see agent 
 - Route agent requests through a TypeScript SDK
 - Score candidates by capability, model tier, health/success signal, latency, and cost
 - Fall back on retryable non-streaming failures
-- Normalize OpenAI, Anthropic, DeepSeek, Qwen, and Ollama provider calls
+- Normalize OpenAI, Anthropic, Gemini, DeepSeek, Qwen, and Ollama provider calls
 - Store traces with SQLite or JSONL fallback
 - Open a local read-only dashboard with Requests and Models pages
 - Inspect/export traces from a small CLI
@@ -48,6 +48,7 @@ import { createDashboard, createReadOnlyDataAccess } from '@adaptive-router/dash
 import {
   createAnthropicProvider,
   createDeepSeekProvider,
+  createGeminiProvider,
   createOllamaProvider,
   createOpenAIProvider,
   createQwenProvider,
@@ -64,6 +65,7 @@ const router = createRouter({
   providers: [
     createOpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
     createAnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY }),
+    createGeminiProvider({ apiKey: process.env.GEMINI_API_KEY }),
     createDeepSeekProvider({ apiKey: process.env.DEEPSEEK_API_KEY }),
     createQwenProvider({ apiKey: process.env.DASHSCOPE_API_KEY }),
     createOllamaProvider({ baseURL: process.env.OLLAMA_BASE_URL }),
@@ -112,6 +114,7 @@ flowchart LR
   D --> D3[DeepSeek]
   D --> D4[Ollama]
   D --> D5[Qwen]
+  D --> D6[Gemini]
   B --> E[Trace Store]
   E --> E1[SQLite]
   E --> E2[JSONL fallback]

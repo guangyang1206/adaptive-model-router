@@ -198,6 +198,78 @@ export function createAnthropicProvider(options: ProviderFactoryOptions): Provid
   }
 }
 
+export function createGeminiProvider(options: ProviderFactoryOptions): ProviderAdapter {
+  const fetchImpl = options.fetch ?? defaultFetch
+  // Google Generative Language API (Gemini). Override `baseURL` for a proxy or
+  // a Vertex-compatible gateway exposing the same generateContent shape.
+  const baseURL = trimTrailingSlash(options.baseURL ?? "https://generativelanguage.googleapis.com/v1beta")
+  const models = options.models ?? [
+    createModelProfile({
+      id: "gemini/gemini-2.5-flash",
+      provider: "gemini",
+      model: "gemini-2.5-flash",
+      type: "commercial",
+      kind: "native",
+      tier: "balanced",
+      contextWindow: 1048576,
+      capabilities: ["reasoning", "tool-calling", "json-mode", "vision", "streaming"],
+      inputPer1M: 0.3,
+      outputPer1M: 2.5,
+    }),
+    createModelProfile({
+      id: "gemini/gemini-2.5-pro",
+      provider: "gemini",
+      model: "gemini-2.5-pro",
+      type: "commercial",
+      kind: "native",
+      tier: "high",
+      contextWindow: 1048576,
+      capabilities: ["reasoning", "tool-calling", "json-mode", "vision", "streaming"],
+      inputPer1M: 1.25,
+      outputPer1M: 10,
+    }),
+  ]
+
+  return {
+    id: "gemini",
+    kind: "native",
+    async listModels() {
+      return models
+    },
+    async chat(request, model) {
+      assertApiKey(options.apiKey, "gemini")
+      const response = await fetchImpl(`${baseURL}/models/${model.model}:generateContent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          // Header-based auth keeps the key out of the request URL / access logs.
+          "x-goog-api-key": options.apiKey ?? "",
+        },
+        body: JSON.stringify(toGeminiRequest(request)),
+        signal: createTimeoutSignal(options.timeoutMs),
+      })
+
+      if (!response.ok) throw await createHttpError(response, "gemini", model.id)
+      const raw = await response.json() as GeminiResponse
+      const content = raw.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? ""
+      const usage = raw.usageMetadata
+      return {
+        id: raw.responseId,
+        model: model.id,
+        content,
+        choices: [{ message: { role: "assistant", content } }],
+        usage: usage
+          ? normalizeUsage(usage.promptTokenCount ?? 0, usage.candidatesTokenCount ?? 0, model, false)
+          : undefined,
+        raw,
+      }
+    },
+    normalizeError(error) {
+      return normalizeProviderError(error, "gemini")
+    },
+  }
+}
+
 export function createOllamaProvider(options: OllamaProviderOptions = {}): ProviderAdapter {
   const fetchImpl = options.fetch ?? defaultFetch
   const baseURL = trimTrailingSlash(options.baseURL ?? "http://localhost:11434")
@@ -346,6 +418,27 @@ function toAnthropicRequest(request: RouteRequest, model: ModelProfile) {
   }
 }
 
+function toGeminiRequest(request: RouteRequest) {
+  // Gemini separates the system prompt (systemInstruction) from the turn list
+  // and uses role "model" for assistant turns. Tool messages fold into the user
+  // turn for MVP parity with the other adapters.
+  const system = request.messages
+    .filter((message) => message.role === "system")
+    .map((message) => message.content)
+    .join("\n\n")
+  const contents = request.messages
+    .filter((message) => message.role !== "system")
+    .map((message) => ({
+      role: message.role === "assistant" ? "model" : "user",
+      parts: [{ text: message.content }],
+    }))
+
+  return {
+    contents,
+    systemInstruction: system ? { parts: [{ text: system }] } : undefined,
+  }
+}
+
 function toOllamaRequest(request: RouteRequest, model: ModelProfile) {
   return {
     model: model.model,
@@ -364,6 +457,12 @@ type AnthropicResponse = {
   id?: string
   content?: { type?: string; text?: string }[]
   usage?: { input_tokens?: number; output_tokens?: number }
+}
+
+type GeminiResponse = {
+  responseId?: string
+  candidates?: { content?: { parts?: { text?: string }[] } }[]
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number }
 }
 
 type OllamaResponse = {

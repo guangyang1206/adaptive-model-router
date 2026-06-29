@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createQwenProvider } from "../dist/index.js"
+import { createQwenProvider, createGeminiProvider } from "../dist/index.js"
 
 test("qwen provider exposes OpenAI-compatible default models", async () => {
   const provider = createQwenProvider({ apiKey: "test-key" })
@@ -73,6 +73,105 @@ test("qwen provider honors a custom baseURL override", async () => {
 
 test("qwen provider surfaces an auth error when apiKey is missing", async () => {
   const provider = createQwenProvider({})
+  const [model] = await provider.listModels()
+
+  await assert.rejects(
+    () => provider.chat({ messages: [{ role: "user", content: "hi" }] }, model),
+    (error) => {
+      const normalized = provider.normalizeError(error)
+      assert.equal(normalized.code, "AR_PROVIDER_AUTH_FAILED")
+      assert.equal(normalized.retryable, false)
+      return true
+    },
+  )
+})
+
+test("gemini provider exposes native default models", async () => {
+  const provider = createGeminiProvider({ apiKey: "test-key" })
+  assert.equal(provider.id, "gemini")
+  assert.equal(provider.kind, "native")
+
+  const models = await provider.listModels()
+  const ids = models.map((model) => model.id)
+  assert.ok(ids.includes("gemini/gemini-2.5-flash"))
+  assert.ok(ids.includes("gemini/gemini-2.5-pro"))
+  assert.ok(models.every((model) => model.provider === "gemini"))
+  assert.ok(models.every((model) => model.type === "commercial"))
+})
+
+test("gemini provider posts generateContent, maps roles, and parses usageMetadata", async () => {
+  const calls = []
+  const mockFetch = async (url, init) => {
+    calls.push({ url: String(url), init })
+    return new Response(
+      JSON.stringify({
+        responseId: "resp-gemini-1",
+        candidates: [{ content: { parts: [{ text: "Hello" }, { text: " world" }] } }],
+        usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 4, totalTokenCount: 16 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }
+
+  const provider = createGeminiProvider({ apiKey: "secret-token", fetch: mockFetch })
+  const [model] = await provider.listModels()
+
+  const response = await provider.chat(
+    {
+      messages: [
+        { role: "system", content: "be terse" },
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "earlier" },
+      ],
+    },
+    model,
+  )
+
+  assert.equal(calls.length, 1)
+  assert.equal(
+    calls[0].url,
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+  )
+  // Key travels in the header, never in the URL.
+  assert.equal(calls[0].init.headers["x-goog-api-key"], "secret-token")
+  assert.ok(!calls[0].url.includes("secret-token"))
+
+  const body = JSON.parse(calls[0].init.body)
+  assert.equal(body.systemInstruction.parts[0].text, "be terse")
+  assert.equal(body.contents.length, 2)
+  assert.equal(body.contents[0].role, "user")
+  assert.equal(body.contents[1].role, "model")
+
+  assert.equal(response.content, "Hello world")
+  assert.equal(response.usage?.inputTokens, 12)
+  assert.equal(response.usage?.outputTokens, 4)
+  assert.equal(response.usage?.totalTokens, 16)
+  assert.equal(response.usage?.estimated, false)
+})
+
+test("gemini provider honors a custom baseURL override", async () => {
+  const calls = []
+  const mockFetch = async (url) => {
+    calls.push(String(url))
+    return new Response(
+      JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }
+
+  const provider = createGeminiProvider({
+    apiKey: "k",
+    baseURL: "http://localhost:9000/v1beta",
+    fetch: mockFetch,
+  })
+  const [model] = await provider.listModels()
+  await provider.chat({ messages: [{ role: "user", content: "hi" }] }, model)
+
+  assert.equal(calls[0], "http://localhost:9000/v1beta/models/gemini-2.5-flash:generateContent")
+})
+
+test("gemini provider surfaces an auth error when apiKey is missing", async () => {
+  const provider = createGeminiProvider({})
   const [model] = await provider.listModels()
 
   await assert.rejects(
