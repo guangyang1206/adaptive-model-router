@@ -267,7 +267,7 @@ function healthToScore(status: string | undefined): number {
 }
 
 function estimateUsage(model: ModelProfile, request: RouteRequest): Usage {
-  const inputTokens = Math.max(1, Math.ceil(request.messages.map((message) => message.content.length).join(" ").length / 4))
+  const inputTokens = Math.max(1, Math.ceil(totalMessageChars(request) / 4))
   const outputTokens = 32
   const cost = estimateCost(model, request, outputTokens)
   return {
@@ -280,10 +280,14 @@ function estimateUsage(model: ModelProfile, request: RouteRequest): Usage {
 }
 
 function estimateCost(model: ModelProfile, request: RouteRequest, outputTokens = 32): { costUsd: number } {
-  const inputTokens = Math.max(1, Math.ceil(request.messages.map((message) => message.content.length).join(" ").length / 4))
+  const inputTokens = Math.max(1, Math.ceil(totalMessageChars(request) / 4))
   const inputRate = model.cost?.inputPer1M ?? 0
   const outputRate = model.cost?.outputPer1M ?? inputRate
   return { costUsd: (inputTokens / 1_000_000) * inputRate + (outputTokens / 1_000_000) * outputRate }
+}
+
+function totalMessageChars(request: RouteRequest): number {
+  return request.messages.reduce((sum, message) => sum + message.content.length, 0)
 }
 
 function createTrace(
