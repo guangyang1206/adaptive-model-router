@@ -4,7 +4,6 @@ import type {
   ModelProfile,
   ProviderAdapter,
   ProviderKind,
-  ProviderResponse,
   RouteRequest,
   Usage,
 } from "./types.js"
@@ -90,6 +89,43 @@ export function createDeepSeekProvider(options: ProviderFactoryOptions): Provide
         capabilities: ["reasoning", "json-mode", "streaming"],
         inputPer1M: 0.55,
         outputPer1M: 2.19,
+      }),
+    ],
+  })
+}
+
+export function createQwenProvider(options: ProviderFactoryOptions): ProviderAdapter {
+  return createOpenAICompatibleProvider({
+    ...options,
+    id: "qwen",
+    // DashScope OpenAI-compatible mode. Override `baseURL` for self-hosted /
+    // alternative gateways (e.g. an OpenAI-compatible vLLM serving Qwen).
+    baseURL: options.baseURL ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    kind: "openai-compatible",
+    defaultModels: [
+      createModelProfile({
+        id: "qwen/qwen-plus",
+        provider: "qwen",
+        model: "qwen-plus",
+        type: "open-source",
+        kind: "openai-compatible",
+        tier: "balanced",
+        contextWindow: 131072,
+        capabilities: ["reasoning", "tool-calling", "json-mode", "streaming"],
+        inputPer1M: 0.4,
+        outputPer1M: 1.2,
+      }),
+      createModelProfile({
+        id: "qwen/qwen-max",
+        provider: "qwen",
+        model: "qwen-max",
+        type: "open-source",
+        kind: "openai-compatible",
+        tier: "high",
+        contextWindow: 32768,
+        capabilities: ["reasoning", "tool-calling", "json-mode", "streaming"],
+        inputPer1M: 1.6,
+        outputPer1M: 6.4,
       }),
     ],
   })

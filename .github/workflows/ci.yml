@@ -16,8 +16,14 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install TypeScript locally
-        run: npm install --no-save typescript@^5.6.0
+      - name: Install toolchain locally
+        run: npm install --no-save typescript@^5.6.0 eslint@^9.13.0 typescript-eslint@^8.10.0 @eslint/js@^9.13.0
+
+      - name: Lint
+        run: npx eslint "packages/**/*.ts"
+
+      - name: Typecheck
+        run: npx tsc -p tsconfig.typecheck.json
 
       - name: Build SDK
         run: npx tsc -p packages/sdk/tsconfig.json
@@ -29,7 +35,7 @@ jobs:
         run: npx tsc -p packages/cli/tsconfig.json
 
       - name: Run SDK tests
-        run: node --test packages/sdk/test/index.test.mjs packages/sdk/test/storage.test.mjs
+        run: node --test packages/sdk/test/index.test.mjs packages/sdk/test/storage.test.mjs packages/sdk/test/providers.test.mjs
 
       - name: Run CLI smoke test
         shell: bash

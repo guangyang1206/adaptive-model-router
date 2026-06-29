@@ -1,0 +1,12 @@
+{
+  // Pure type-check gate: no emit, just verify all package sources type-check.
+  // Runs in CI before the per-package builds as a fast correctness signal.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["packages/*/src/**/*.ts"]
+}

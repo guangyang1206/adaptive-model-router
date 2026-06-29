@@ -10,3 +10,4 @@ coverage
 *.sqlite
 *.db
 .learnings/
+.workbuddy/
