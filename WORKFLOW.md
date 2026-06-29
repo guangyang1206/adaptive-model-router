@@ -118,6 +118,12 @@ Repo merge settings (enforced via API, 2026-06-29):
 `delete_branch_on_merge=true`, `squash_merge_commit_title=PR_TITLE`,
 `squash_merge_commit_message=PR_BODY`.
 
+**Enforcement (not just docs):** the `pr-title` CI job in `.github/workflows/ci.yml`
+validates the PR title against the Conventional Commit format on every PR (open/edit/
+reopen/sync) — a malformed title fails CI rather than relying on reviewer discipline. We
+lint the **title only**, not individual commits, so contributors can use messy WIP commits
+freely. Contributor-facing guidance lives in `CONTRIBUTING.md`.
+
 ---
 
 ## 4. Milestone review (human gate)

@@ -5,8 +5,35 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, edited, reopened, synchronize]
 
 jobs:
+  pr-title:
+    # The repo is squash-merge only, so the PR title becomes the commit on `main`.
+    # It must be a Conventional Commit. We lint the title, not individual commits,
+    # so contributors can use messy WIP commits on their branch freely.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title is a Conventional Commit
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='^(feat|fix|docs|refactor|test|chore|ci|perf)(\([a-z0-9-]+\))?!?: .+'
+          if [[ "$PR_TITLE" =~ $pattern ]]; then
+            echo "✓ PR title OK: $PR_TITLE"
+          else
+            echo "::error::PR title must be a Conventional Commit (it becomes the squash commit on main)."
+            echo "Got:      $PR_TITLE"
+            echo "Expected: <type>(<scope>): <subject>"
+            echo "  type  ∈ feat | fix | docs | refactor | test | chore | ci | perf"
+            echo "  scope optional, e.g. (sdk) (cli) (dashboard)"
+            echo "  example: feat(sdk): add Gemini provider adapter"
+            exit 1
+          fi
+
   build-test:
     runs-on: ubuntu-latest
     steps:
