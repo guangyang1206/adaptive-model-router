@@ -37,8 +37,10 @@ main            ← protected; only human-reviewed merges
 
 - Automation works on `auto/dev`, rebasing on `main` at the start of each cycle.
 - Automation **pushes `auto/dev`** every successful cycle.
-- Opening / merging PRs is a **human action** (this environment has no `gh` CLI/token,
-  which is intentional — it keeps a human gate on `main`).
+- Automation **may open or update a PR** `auto/dev → main` via the GitHub API
+  (fine-grained PAT stored at `~/.workbuddy/secrets/github_token_adaptive-model-router.env`,
+  Pull Requests: write). **It must never merge.** Merging `main` stays a **human action** —
+  that is the gate.
 
 ---
 
@@ -80,8 +82,8 @@ in this environment due to Corepack signature issues — see `.learnings/ERRORS.
 
 At each roadmap milestone (or when `auto/dev` has accumulated a meaningful feature):
 
-1. Maintainer reviews `auto/dev` diff.
-2. Opens a PR `auto/dev → main`.
+1. The loop (or maintainer) opens/updates a PR `auto/dev → main` via the GitHub API.
+2. Maintainer reviews the `auto/dev` diff.
 3. Runs a code review pass: correctness, scope-vs-spec, test coverage, security
    (no secrets, no unsafe `Function`/eval beyond the documented `node:sqlite` loader).
 4. Merge or request changes.
