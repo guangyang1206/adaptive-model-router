@@ -15,7 +15,7 @@ every commit, and human review at milestones.
 ## 1. Principles (non-negotiable)
 
 1. **`main` is sacred.** Automation never pushes directly to `main`. All automated work
-   lands on the `auto/dev` branch and is merged only after human review.
+   lands on the `develop` branch and is merged only after human review.
 2. **Quality gate before every commit.** `build → test → smoke` must all pass. If any
    step fails, the loop writes a diagnostic note and pushes nothing.
 3. **Small, reviewable increments.** Each 6-hour cycle advances at most one roadmap
@@ -31,17 +31,26 @@ every commit, and human review at milestones.
 
 ```
 main            ← protected; only human-reviewed SQUASH merges (1 commit / PR)
-  └── auto/dev  ← automation commits here incrementally, then pushes
+  └── develop  ← automation commits here incrementally, then pushes
         └── PR  ← opened at milestones for human review → squash-merge to main
 ```
 
-- Automation works on `auto/dev`, rebasing on `main` at the start of each cycle.
-- Automation **pushes `auto/dev`** every successful cycle (incremental commits are fine —
+- Automation works on `develop`, rebasing on `main` at the start of each cycle.
+- Automation **pushes `develop`** every successful cycle (incremental commits are fine —
   they get squashed at merge time; see §3.5).
-- Automation **may open or update a PR** `auto/dev → main` via the GitHub API
+- Automation **may open or update a PR** `develop → main` via the GitHub API
   (fine-grained PAT stored at `~/.workbuddy/secrets/github_token_adaptive-model-router.env`,
   Pull Requests: write). **It must never merge.** Merging `main` stays a **human action** —
   that is the gate.
+
+**Branch protection on `main` (enforced via API, 2026-06-30):**
+- Required status checks (must pass before merge): `pr-title`, `build-test` — `strict=true`
+  (PR branch must be up to date with `main`).
+- `required_linear_history=true`, `allow_force_pushes=false`, `allow_deletions=false`,
+  `required_conversation_resolution=true`.
+- `enforce_admins=false` and **no** required reviews — deliberate for a solo-maintainer +
+  automation repo: the maintainer can still merge/hotfix, but every **external** PR is hard-gated
+  by green CI. (When more maintainers join, flip on required reviews + `enforce_admins`.)
 
 ---
 
@@ -50,15 +59,15 @@ main            ← protected; only human-reviewed SQUASH merges (1 commit / PR)
 | Step | Action | Gate |
 |---|---|---|
 | 1. Align | Read `adaptive-model-router-spec-v0.1.md` + `ROADMAP.md`; compare against current code. Identify the single highest-value next item. | — |
-| 2. Sync | `git checkout auto/dev` (create if missing), rebase onto latest `main`. | clean rebase |
+| 2. Sync | `git checkout develop` (create if missing), rebase onto latest `main`. | clean rebase |
 | 3. Develop | Implement that one item. Keep diffs focused. | — |
 | 4. Lint | `eslint "packages/**/*.ts"`. | must pass |
 | 5. Typecheck | `tsc -p tsconfig.typecheck.json` (noEmit, all package src). | must pass |
 | 6. Build | `tsc` build for sdk → dashboard → cli. | must pass |
 | 7. Test | `node --test packages/sdk/test/*.mjs`. | must pass |
 | 8. Smoke | CLI smoke (init/doctor/inspect/export) + dashboard smoke (boot + `/api/metrics/summary` + `/requests`). | must pass |
-| 9. Commit | Conventional commit on `auto/dev`. | only if 4–8 green |
-| 10. Push | `git push origin auto/dev`. | — |
+| 9. Commit | Conventional commit on `develop`. | only if 4–8 green |
+| 10. Push | `git push origin develop`. | — |
 | 11. Log | Append cycle summary to `.workbuddy/memory/YYYY-MM-DD.md`. | always |
 
 **If any gate fails:** stop, write the failure + root cause to the daily log, push
@@ -94,7 +103,7 @@ without forcing the automation to rewrite history.
    go in separate PRs.
 2. **Squash-merge only.** `main` receives exactly **one commit per PR**. Merge-commits and
    rebase-merges are disabled at the repo level; the source branch is auto-deleted on merge.
-   → Working branches (`auto/dev`, feature branches) may contain many small commits; GitHub
+   → Working branches (`develop`, feature branches) may contain many small commits; GitHub
    collapses them into one on merge. The automation therefore **never** rewrites history.
 3. **PR title = Conventional Commit.** The PR title becomes the squash commit message on
    `main`, so it must follow:
@@ -109,7 +118,7 @@ without forcing the automation to rewrite history.
    This keeps `main` semver/changelog-ready for later automated releases.
 
 **Why squash-merge instead of "rebase the branch to one commit":** the 6-hour loop commits
-incrementally and pushes every green cycle. Rebasing `auto/dev` down to a single commit each
+incrementally and pushes every green cycle. Rebasing `develop` down to a single commit each
 time means rewriting pushed history on an unattended branch — fragile and easy to corrupt.
 Squash-merge gives the same clean `main` while letting the loop append commits safely.
 
@@ -128,10 +137,10 @@ freely. Contributor-facing guidance lives in `CONTRIBUTING.md`.
 
 ## 4. Milestone review (human gate)
 
-At each roadmap milestone (or when `auto/dev` has accumulated a meaningful feature):
+At each roadmap milestone (or when `develop` has accumulated a meaningful feature):
 
-1. The loop (or maintainer) opens/updates a PR `auto/dev → main` via the GitHub API.
-2. Maintainer reviews the `auto/dev` diff.
+1. The loop (or maintainer) opens/updates a PR `develop → main` via the GitHub API.
+2. Maintainer reviews the `develop` diff.
 3. Runs a code review pass: correctness, scope-vs-spec, test coverage, security
    (no secrets, no unsafe `Function`/eval beyond the documented `node:sqlite` loader).
 4. Merge or request changes.
@@ -145,7 +154,7 @@ MVP-0 is **functionally complete** (SDK, quality-gated routing, 4 providers, fal
 SQLite+JSONL storage, 2-page dashboard, bilingual docs). The dev loop's near-term
 objectives are therefore **MVP-1 + quality hardening**, in priority order:
 
-1. ~~**Quality gate completion** — add an eslint config + a `lint` step the CI actually runs.~~ — ✅ done (`9de8f29` on auto/dev): eslint flat config + CI lint step; caught and fixed 3 unused-import issues.
+1. ~~**Quality gate completion** — add an eslint config + a `lint` step the CI actually runs.~~ — ✅ done (`9de8f29` on develop): eslint flat config + CI lint step; caught and fixed 3 unused-import issues.
 2. **Fix known correctness/clarity debts**
    - ~~`router.dashboard()` returns a URL without starting a server~~ — ✅ fixed (3df0f47): now returns an honest `DashboardHandle { url, started:false, hint }`.
    - ~~`redactConfig()` in CLI is a no-op~~ — ✅ fixed (3df0f47): real recursive secret redaction.
@@ -166,5 +175,5 @@ loop silently expand scope.
 - [ ] Tests pass; new behavior has at least one test
 - [ ] Smoke passes
 - [ ] Docs/README updated if public API changed
-- [ ] Committed to `auto/dev` and pushed
+- [ ] Committed to `develop` and pushed
 - [ ] Cycle logged to daily memory
