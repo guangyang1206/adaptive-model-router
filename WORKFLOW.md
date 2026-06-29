@@ -95,7 +95,7 @@ MVP-0 is **functionally complete** (SDK, quality-gated routing, 4 providers, fal
 SQLite+JSONL storage, 2-page dashboard, bilingual docs). The dev loop's near-term
 objectives are therefore **MVP-1 + quality hardening**, in priority order:
 
-1. **Quality gate completion** — add an eslint config + a `lint` step the CI actually runs.
+1. ~~**Quality gate completion** — add an eslint config + a `lint` step the CI actually runs.~~ — ✅ done (`9de8f29` on auto/dev): eslint flat config + CI lint step; caught and fixed 3 unused-import issues.
 2. **Fix known correctness/clarity debts**
    - ~~`router.dashboard()` returns a URL without starting a server~~ — ✅ fixed (3df0f47): now returns an honest `DashboardHandle { url, started:false, hint }`.
    - ~~`redactConfig()` in CLI is a no-op~~ — ✅ fixed (3df0f47): real recursive secret redaction.
