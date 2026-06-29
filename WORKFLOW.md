@@ -97,8 +97,9 @@ objectives are therefore **MVP-1 + quality hardening**, in priority order:
 
 1. **Quality gate completion** — add an eslint config + a `lint` step the CI actually runs.
 2. **Fix known correctness/clarity debts**
-   - `router.dashboard()` returns a URL without starting a server — make it real or mark stub.
-   - `redactConfig()` in CLI is a no-op — implement real redaction or rename.
+   - ~~`router.dashboard()` returns a URL without starting a server~~ — ✅ fixed (3df0f47): now returns an honest `DashboardHandle { url, started:false, hint }`.
+   - ~~`redactConfig()` in CLI is a no-op~~ — ✅ fixed (3df0f47): real recursive secret redaction.
+   - ~~token/cost estimation measured stringified-length, not content length~~ — ✅ fixed (dbc078a).
 3. **Provider expansion (MVP-1)** — Gemini adapter, Qwen adapter, vLLM support.
 4. **Framework adapters** — LangChain/LangGraph, Vercel AI SDK.
 5. **Dashboard filtering + model comparison.**
