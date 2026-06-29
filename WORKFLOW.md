@@ -30,13 +30,14 @@ every commit, and human review at milestones.
 ## 2. Branch & sync model
 
 ```
-main            ← protected; only human-reviewed merges
-  └── auto/dev  ← automation commits here, then pushes
-        └── PR  ← opened at milestones for human review → merge to main
+main            ← protected; only human-reviewed SQUASH merges (1 commit / PR)
+  └── auto/dev  ← automation commits here incrementally, then pushes
+        └── PR  ← opened at milestones for human review → squash-merge to main
 ```
 
 - Automation works on `auto/dev`, rebasing on `main` at the start of each cycle.
-- Automation **pushes `auto/dev`** every successful cycle.
+- Automation **pushes `auto/dev`** every successful cycle (incremental commits are fine —
+  they get squashed at merge time; see §3.5).
 - Automation **may open or update a PR** `auto/dev → main` via the GitHub API
   (fine-grained PAT stored at `~/.workbuddy/secrets/github_token_adaptive-model-router.env`,
   Pull Requests: write). **It must never merge.** Merging `main` stays a **human action** —
@@ -79,6 +80,43 @@ $NODE --test packages/sdk/test/*.mjs
 
 (Managed `tsc` + Node's built-in test runner are used instead of `pnpm`, which fails
 in this environment due to Corepack signature issues — see `.learnings/ERRORS.md`.)
+
+---
+
+## 3.5 Commit & merge policy (locked)
+
+We optimize for a **clean, linear `main` where every commit is one reviewable change** —
+without forcing the automation to rewrite history.
+
+**Rules:**
+
+1. **One PR = one logical change.** Not "one commit" — one *purpose*. Unrelated changes
+   go in separate PRs.
+2. **Squash-merge only.** `main` receives exactly **one commit per PR**. Merge-commits and
+   rebase-merges are disabled at the repo level; the source branch is auto-deleted on merge.
+   → Working branches (`auto/dev`, feature branches) may contain many small commits; GitHub
+   collapses them into one on merge. The automation therefore **never** rewrites history.
+3. **PR title = Conventional Commit.** The PR title becomes the squash commit message on
+   `main`, so it must follow:
+
+   ```
+   <type>(<scope>): <subject>
+   type ∈ feat | fix | docs | refactor | test | chore | ci | perf
+   scope ∈ sdk | dashboard | cli | storage | docs | ci | repo   (optional)
+   ```
+
+   Examples: `feat(sdk): add Gemini provider adapter`, `fix(cli): redact secrets in inspect`.
+   This keeps `main` semver/changelog-ready for later automated releases.
+
+**Why squash-merge instead of "rebase the branch to one commit":** the 6-hour loop commits
+incrementally and pushes every green cycle. Rebasing `auto/dev` down to a single commit each
+time means rewriting pushed history on an unattended branch — fragile and easy to corrupt.
+Squash-merge gives the same clean `main` while letting the loop append commits safely.
+
+Repo merge settings (enforced via API, 2026-06-29):
+`allow_squash_merge=true`, `allow_merge_commit=false`, `allow_rebase_merge=false`,
+`delete_branch_on_merge=true`, `squash_merge_commit_title=PR_TITLE`,
+`squash_merge_commit_message=PR_BODY`.
 
 ---
 
