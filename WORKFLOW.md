@@ -49,26 +49,30 @@ main            ← protected; only human-reviewed merges
 | 1. Align | Read `adaptive-model-router-spec-v0.1.md` + `ROADMAP.md`; compare against current code. Identify the single highest-value next item. | — |
 | 2. Sync | `git checkout auto/dev` (create if missing), rebase onto latest `main`. | clean rebase |
 | 3. Develop | Implement that one item. Keep diffs focused. | — |
-| 4. Build | `tsc` build for sdk → dashboard → cli. | must pass |
-| 5. Test | `node --test packages/sdk/test/*.mjs`. | must pass |
-| 6. Smoke | CLI smoke (init/doctor/inspect/export) + dashboard smoke (boot + `/api/metrics/summary` + `/requests`). | must pass |
-| 7. Commit | Conventional commit on `auto/dev`. | only if 4–6 green |
-| 8. Push | `git push origin auto/dev`. | — |
-| 9. Log | Append cycle summary to `.workbuddy/memory/YYYY-MM-DD.md`. | always |
+| 4. Lint | `eslint "packages/**/*.ts"`. | must pass |
+| 5. Typecheck | `tsc -p tsconfig.typecheck.json` (noEmit, all package src). | must pass |
+| 6. Build | `tsc` build for sdk → dashboard → cli. | must pass |
+| 7. Test | `node --test packages/sdk/test/*.mjs`. | must pass |
+| 8. Smoke | CLI smoke (init/doctor/inspect/export) + dashboard smoke (boot + `/api/metrics/summary` + `/requests`). | must pass |
+| 9. Commit | Conventional commit on `auto/dev`. | only if 4–8 green |
+| 10. Push | `git push origin auto/dev`. | — |
+| 11. Log | Append cycle summary to `.workbuddy/memory/YYYY-MM-DD.md`. | always |
 
 **If any gate fails:** stop, write the failure + root cause to the daily log, push
 nothing. Never commit red code.
 
-### Build / test / smoke commands
+### Lint / typecheck / build / test / smoke commands
 
 ```bash
 TSC=/Users/yangguang/.workbuddy/binaries/node/workspace/node_modules/.bin/tsc
 NODE=/Users/yangguang/.workbuddy/binaries/node/versions/20.18.0/bin/node
 
+$NODE node_modules/.bin/eslint "packages/**/*.ts"
+$TSC -p tsconfig.typecheck.json
 $TSC -p packages/sdk/tsconfig.json
 $TSC -p packages/dashboard/tsconfig.json
 $TSC -p packages/cli/tsconfig.json
-$NODE --test packages/sdk/test/index.test.mjs packages/sdk/test/storage.test.mjs
+$NODE --test packages/sdk/test/*.mjs
 ```
 
 (Managed `tsc` + Node's built-in test runner are used instead of `pnpm`, which fails
