@@ -32,7 +32,7 @@ jobs:
         run: npx tsc -p packages/cli/tsconfig.json
 
       - name: Run SDK tests
-        run: node --test packages/sdk/test/index.test.mjs packages/sdk/test/storage.test.mjs
+        run: node --test packages/sdk/test/index.test.mjs packages/sdk/test/storage.test.mjs packages/sdk/test/providers.test.mjs
 
       - name: Run CLI smoke test
         shell: bash
