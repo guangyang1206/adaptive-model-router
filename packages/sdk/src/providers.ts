@@ -4,7 +4,6 @@ import type {
   ModelProfile,
   ProviderAdapter,
   ProviderKind,
-  ProviderResponse,
   RouteRequest,
   Usage,
 } from "./types.js"

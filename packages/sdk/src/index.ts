@@ -10,7 +10,6 @@ import type {
   ModelProfile,
   OpenAICompatibleClient,
   ProviderAdapter,
-  ProviderResponse,
   RouteAttempt,
   RoutePolicy,
   RouteRequest,
