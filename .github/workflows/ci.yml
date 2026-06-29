@@ -22,6 +22,9 @@ jobs:
       - name: Lint
         run: npx eslint "packages/**/*.ts"
 
+      - name: Typecheck
+        run: npx tsc -p tsconfig.typecheck.json
+
       - name: Build SDK
         run: npx tsc -p packages/sdk/tsconfig.json
 
