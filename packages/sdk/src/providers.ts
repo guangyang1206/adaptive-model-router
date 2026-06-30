@@ -1,6 +1,7 @@
 import type {
   AdaptiveRouterError,
   AdaptiveRouterErrorCode,
+  ModelCapability,
   ModelProfile,
   ProviderAdapter,
   ProviderKind,
@@ -20,6 +21,32 @@ export type ProviderFactoryOptions = {
 
 export type OllamaProviderOptions = Omit<ProviderFactoryOptions, "apiKey"> & {
   baseURL?: string
+}
+
+export type VLLMProviderOptions = ProviderFactoryOptions & {
+  /**
+   * Base URL of the self-hosted vLLM OpenAI-compatible server, e.g.
+   * "http://localhost:8000/v1". Required — there is no sensible public default
+   * for a self-hosted endpoint.
+   */
+  baseURL: string
+  /**
+   * The served model name as passed to `vllm serve <model>`, e.g.
+   * "meta-llama/Llama-3.1-8B-Instruct". Used to synthesize a default model
+   * profile when `models` is not supplied.
+   */
+  model?: string
+  /**
+   * Capabilities to advertise for the synthesized profile. Defaults to
+   * ["reasoning", "streaming"]. Add "tool-calling" only if the served model
+   * and your vLLM build actually support it, otherwise the router may route
+   * tool requests here and have them dropped.
+   */
+  capabilities?: ModelCapability[]
+  /** Context window of the served model. Defaults to 8192. */
+  contextWindow?: number
+  /** Quality tier used for routing. Defaults to "balanced". */
+  tier?: ModelProfile["tier"]
 }
 
 const defaultFetch: FetchLike = async (input, init) => fetch(input, init)
@@ -128,6 +155,52 @@ export function createQwenProvider(options: ProviderFactoryOptions): ProviderAda
         outputPer1M: 6.4,
       }),
     ],
+  })
+}
+
+export function createVLLMProvider(options: VLLMProviderOptions): ProviderAdapter {
+  if (!options.baseURL) {
+    throw {
+      code: "AR_INVALID_REQUEST",
+      message: "vLLM baseURL is required (e.g. http://localhost:8000/v1)",
+      provider: "vllm",
+      retryable: false,
+    } satisfies AdaptiveRouterError
+  }
+
+  const servedModel = options.model ?? "vllm-model"
+  const defaultModels: ModelProfile[] = [
+    createModelProfile({
+      // Namespace the served model under the provider id so multiple
+      // self-hosted backends do not collide in the router's model table.
+      id: `vllm/${servedModel}`,
+      provider: "vllm",
+      model: servedModel,
+      type: "self-hosted",
+      kind: "self-hosted",
+      tier: options.tier ?? "balanced",
+      contextWindow: options.contextWindow ?? 8192,
+      // tool-calling is intentionally NOT advertised by default: the served
+      // model is unknown and the OpenAI-shaped tools we forward may not be
+      // honored. Opt in via `capabilities` when the backend supports it.
+      capabilities: options.capabilities ?? ["reasoning", "streaming"],
+      // Self-hosted inference has no per-token vendor price. Cost is the user's
+      // own compute, so we report 0 and mark it estimated.
+      inputPer1M: 0,
+      outputPer1M: 0,
+      estimated: true,
+    }),
+  ]
+
+  return createOpenAICompatibleProvider({
+    ...options,
+    id: "vllm",
+    baseURL: options.baseURL,
+    kind: "self-hosted",
+    // vLLM only enforces a key when started with --api-key. Treat it as
+    // optional and forward the header only when one was provided.
+    requireApiKey: false,
+    defaultModels,
   })
 }
 
@@ -334,12 +407,20 @@ type OpenAICompatibleOptions = ProviderFactoryOptions & {
   id: string
   kind: ProviderKind
   defaultModels: ModelProfile[]
+  /**
+   * Whether an API key is mandatory. Commercial OpenAI-compatible gateways
+   * (OpenAI, DeepSeek, Qwen) require one. Self-hosted servers such as vLLM
+   * usually run open, so they set this to false and only attach the
+   * Authorization header when a key is actually provided.
+   */
+  requireApiKey?: boolean
 }
 
 function createOpenAICompatibleProvider(options: OpenAICompatibleOptions): ProviderAdapter {
   const fetchImpl = options.fetch ?? defaultFetch
   const baseURL = trimTrailingSlash(options.baseURL ?? "")
   const models = options.models ?? options.defaultModels
+  const requireApiKey = options.requireApiKey ?? true
 
   return {
     id: options.id,
@@ -348,13 +429,14 @@ function createOpenAICompatibleProvider(options: OpenAICompatibleOptions): Provi
       return models
     },
     async chat(request, model) {
-      assertApiKey(options.apiKey, options.id)
+      if (requireApiKey) assertApiKey(options.apiKey, options.id)
+      const headers: Record<string, string> = { "content-type": "application/json" }
+      // Only send Authorization when a key exists. vLLM rejects requests with a
+      // bogus "Bearer undefined" header when --api-key was not configured.
+      if (options.apiKey) headers.authorization = `Bearer ${options.apiKey}`
       const response = await fetchImpl(`${baseURL}/chat/completions`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${options.apiKey}`,
-        },
+        headers,
         body: JSON.stringify(toOpenAICompatibleRequest(request, model)),
         signal: createTimeoutSignal(options.timeoutMs),
       })
