@@ -1,6 +1,7 @@
 export * from "./types.js"
 export * from "./providers.js"
 export * from "./storage.js"
+export * from "./adapters.js"
 
 import type {
   AdaptiveRouterError,
