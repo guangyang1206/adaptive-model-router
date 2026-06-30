@@ -64,6 +64,9 @@ jobs:
       - name: Run SDK tests
         run: node --test packages/sdk/test/index.test.mjs packages/sdk/test/storage.test.mjs packages/sdk/test/providers.test.mjs packages/sdk/test/adapters.test.mjs
 
+      - name: Run dashboard tests
+        run: node --test packages/dashboard/test/data-access.test.mjs
+
       - name: Run CLI smoke test
         shell: bash
         run: |

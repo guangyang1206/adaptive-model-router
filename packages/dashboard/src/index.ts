@@ -91,10 +91,42 @@ export type DashboardDataSource = {
 
 export type DashboardDataAccess = {
   getSummary(): Promise<DashboardMetric[]>
-  listRequests(): Promise<RequestRow[]>
+  listRequests(filter?: RequestFilter): Promise<RequestRow[]>
   getRequest(traceId: string): Promise<TraceDetail | undefined>
   listModels(): Promise<ModelRow[]>
+  compareModels(modelIds: string[]): Promise<ModelComparison>
   getRoutingDecision?(decisionId: string): Promise<TraceDetail | undefined>
+}
+
+/**
+ * Server-side filter for {@link DashboardDataAccess.listRequests}. Filtering
+ * lives in the data layer (not just the browser) so the API itself scales and
+ * stays the single source of truth — the client query string maps 1:1 to this.
+ */
+export type RequestFilter = {
+  /** Restrict to a single routing status. */
+  status?: RequestRow["status"]
+  /** Substring match against the selected model id (case-insensitive). */
+  model?: string
+  /** Substring match against request id OR selected model (case-insensitive). */
+  search?: string
+  /** Cap the number of rows returned (most recent first ordering is preserved). */
+  limit?: number
+}
+
+/** One model rendered as a column in a side-by-side comparison. */
+export type ModelComparisonColumn = ModelRow & { found: boolean }
+
+/**
+ * A side-by-side model comparison: the union of capabilities across the
+ * selected models becomes the matrix rows, each column marking support. Built
+ * for the dashboard's "compare models" view but returned as plain data so it is
+ * trivially testable and reusable.
+ */
+export type ModelComparison = {
+  models: ModelComparisonColumn[]
+  /** Every capability any selected model advertises, sorted and de-duplicated. */
+  capabilityMatrix: { capability: ModelRow["capabilities"][number]; support: boolean[] }[]
 }
 
 export type RunningDashboard = {
@@ -158,12 +190,27 @@ export const readonlyApiRoutes = [
   "GET /api/requests/:id",
   "GET /api/models",
   "GET /api/models/:id/health",
+  "GET /api/models/compare",
   "GET /api/routing-decisions/:id",
 ] as const
 
 export function createReadOnlyDataAccess(source: DashboardDataSource): DashboardDataAccess {
   async function getTraces() {
     return await source.listTraces()
+  }
+
+  async function listModelRows(): Promise<ModelRow[]> {
+    const models = (await source.listModels?.()) ?? []
+    return models.map((model) => ({
+      modelId: model.id,
+      provider: model.provider,
+      type: model.type,
+      capabilities: model.capabilities,
+      health: model.health?.status ?? "unknown",
+      latencyP50Ms: model.health?.latencyP50Ms,
+      costProfile: formatCostProfile(model.cost),
+      enabled: model.enabled,
+    }))
   }
 
   return {
@@ -181,8 +228,9 @@ export function createReadOnlyDataAccess(source: DashboardDataSource): Dashboard
         { label: "Fallback rate", value: total === 0 ? "0%" : `${Math.round((fallbackCount / total) * 100)}%` },
       ]
     },
-    async listRequests(): Promise<RequestRow[]> {
-      return (await getTraces()).map(traceToRequestRow)
+    async listRequests(filter?: RequestFilter): Promise<RequestRow[]> {
+      const rows = (await getTraces()).map(traceToRequestRow)
+      return applyRequestFilter(rows, filter)
     },
     async getRequest(traceId: string): Promise<TraceDetail | undefined> {
       const trace = (await getTraces()).find((entry) => entry.traceId === traceId)
@@ -190,17 +238,10 @@ export function createReadOnlyDataAccess(source: DashboardDataSource): Dashboard
       return traceToDetail(trace)
     },
     async listModels(): Promise<ModelRow[]> {
-      const models = (await source.listModels?.()) ?? []
-      return models.map((model) => ({
-        modelId: model.id,
-        provider: model.provider,
-        type: model.type,
-        capabilities: model.capabilities,
-        health: model.health?.status ?? "unknown",
-        latencyP50Ms: model.health?.latencyP50Ms,
-        costProfile: formatCostProfile(model.cost),
-        enabled: model.enabled,
-      }))
+      return listModelRows()
+    },
+    async compareModels(modelIds: string[]): Promise<ModelComparison> {
+      return buildModelComparison(await listModelRows(), modelIds)
     },
     async getRoutingDecision(decisionId: string): Promise<TraceDetail | undefined> {
       const trace = (await getTraces()).find((entry) => entry.decisionId === decisionId)
@@ -235,10 +276,17 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       return
     }
     if (url.pathname === "/api/metrics/summary") return sendJson(response, await data.getSummary())
-    if (url.pathname === "/api/requests") return sendJson(response, await data.listRequests())
+    if (url.pathname === "/api/requests") return sendJson(response, await data.listRequests(parseRequestFilter(url)))
     if (url.pathname.startsWith("/api/requests/")) {
       const detail = await data.getRequest(decodeURIComponent(url.pathname.replace("/api/requests/", "")))
       return detail ? sendJson(response, detail) : sendJson(response, { error: "not found" }, 404)
+    }
+    if (url.pathname === "/api/models/compare") {
+      const ids = (url.searchParams.get("ids") ?? "")
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean)
+      return sendJson(response, await data.compareModels(ids))
     }
     if (url.pathname === "/api/models") return sendJson(response, await data.listModels())
     if (url.pathname.startsWith("/api/models/") && url.pathname.endsWith("/health")) {
@@ -259,6 +307,24 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   }
 }
 
+/**
+ * Translate the `/api/requests` query string into a {@link RequestFilter}.
+ * `status` is validated against the known set; anything else is ignored so a
+ * stray value can never 500 the endpoint.
+ */
+function parseRequestFilter(url: URL): RequestFilter {
+  const filter: RequestFilter = {}
+  const status = url.searchParams.get("status")
+  if (status === "success" || status === "failed" || status === "fallback_success") filter.status = status
+  const model = url.searchParams.get("model")
+  if (model) filter.model = model
+  const search = url.searchParams.get("search") ?? url.searchParams.get("q")
+  if (search) filter.search = search
+  const limit = Number(url.searchParams.get("limit"))
+  if (Number.isFinite(limit) && limit > 0) filter.limit = limit
+  return filter
+}
+
 function renderDashboardHtml(initialPage: "requests" | "models"): string {
   return `<!doctype html>
 <html lang="en">
@@ -267,7 +333,7 @@ function renderDashboardHtml(initialPage: "requests" | "models"): string {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Adaptive Model Router Dashboard</title>
 <style>
-:root{color-scheme:dark;--bg:#0D1117;--surface:#161B22;--surface2:#21262D;--border:#30363D;--text:#F0F6FC;--muted:#8B949E;--blue:#3B82F6;--ok:#3FB950;--warn:#D29922;--err:#F85149}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Inter,"Noto Sans SC",system-ui,sans-serif}.app{display:grid;grid-template-columns:220px 1fr;min-height:100dvh}.side{border-right:1px solid var(--border);background:#0f141b;padding:20px}.brand{font-weight:700;margin-bottom:24px}.nav{display:grid;gap:8px}.nav button{background:transparent;border:1px solid transparent;color:var(--muted);padding:10px 12px;border-radius:8px;text-align:left;cursor:pointer}.nav button.active,.nav button:hover{background:var(--surface);border-color:var(--border);color:var(--text)}main{padding:28px;min-width:0}.header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:20px}.header h1{font-size:24px;margin:0}.header p{margin:4px 0 0;color:var(--muted)}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0}.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px}.card span{color:var(--muted);font-size:12px}.card strong{display:block;font-size:20px;margin-top:6px}.toolbar{display:flex;gap:8px;margin:16px 0}.toolbar input,.toolbar select{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px}table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:top}th{color:var(--muted);font-size:12px;font-weight:600}tr:hover td{background:var(--surface2)}.mono{font-family:"JetBrains Mono",ui-monospace,monospace}.badge{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:12px;color:var(--muted)}.ok{color:var(--ok)}.failed,.down{color:var(--err)}.fallback_success,.degraded,.limited{color:var(--warn)}.hidden{display:none}.drawer{position:fixed;inset:0 0 0 auto;width:min(720px,46vw);background:#0f141b;border-left:1px solid var(--border);padding:22px;overflow:auto;box-shadow:-20px 0 60px rgba(0,0,0,.35)}.drawer pre{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;overflow:auto}.close{float:right;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;cursor:pointer}.empty{padding:28px;color:var(--muted);background:var(--surface);border:1px dashed var(--border);border-radius:12px}@media(max-width:900px){.app{grid-template-columns:1fr}.side{border-right:0;border-bottom:1px solid var(--border)}.cards{grid-template-columns:1fr 1fr}.drawer{width:100vw}}
+:root{color-scheme:dark;--bg:#0D1117;--surface:#161B22;--surface2:#21262D;--border:#30363D;--text:#F0F6FC;--muted:#8B949E;--blue:#3B82F6;--ok:#3FB950;--warn:#D29922;--err:#F85149}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Inter,"Noto Sans SC",system-ui,sans-serif}.app{display:grid;grid-template-columns:220px 1fr;min-height:100dvh}.side{border-right:1px solid var(--border);background:#0f141b;padding:20px}.brand{font-weight:700;margin-bottom:24px}.nav{display:grid;gap:8px}.nav button{background:transparent;border:1px solid transparent;color:var(--muted);padding:10px 12px;border-radius:8px;text-align:left;cursor:pointer}.nav button.active,.nav button:hover{background:var(--surface);border-color:var(--border);color:var(--text)}main{padding:28px;min-width:0}.header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:20px}.header h1{font-size:24px;margin:0}.header p{margin:4px 0 0;color:var(--muted)}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0}.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px}.card span{color:var(--muted);font-size:12px}.card strong{display:block;font-size:20px;margin-top:6px}.toolbar{display:flex;gap:8px;margin:16px 0}.toolbar input,.toolbar select{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px}.toolbar button{background:var(--blue);border:1px solid var(--blue);color:#fff;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:600}.toolbar button.ghost{background:transparent;border-color:var(--border);color:var(--muted);font-weight:400}.toolbar button:hover{filter:brightness(1.08)}#compare{margin:0 0 18px}.cmp-table td:first-child,.cmp-table th:first-child{color:var(--muted)}input[type=checkbox]{accent-color:var(--blue);cursor:pointer}table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:top}th{color:var(--muted);font-size:12px;font-weight:600}tr:hover td{background:var(--surface2)}.mono{font-family:"JetBrains Mono",ui-monospace,monospace}.badge{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:12px;color:var(--muted)}.ok{color:var(--ok)}.failed,.down{color:var(--err)}.fallback_success,.degraded,.limited{color:var(--warn)}.hidden{display:none}.drawer{position:fixed;inset:0 0 0 auto;width:min(720px,46vw);background:#0f141b;border-left:1px solid var(--border);padding:22px;overflow:auto;box-shadow:-20px 0 60px rgba(0,0,0,.35)}.drawer pre{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;overflow:auto}.close{float:right;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;cursor:pointer}.empty{padding:28px;color:var(--muted);background:var(--surface);border:1px dashed var(--border);border-radius:12px}@media(max-width:900px){.app{grid-template-columns:1fr}.side{border-right:0;border-bottom:1px solid var(--border)}.cards{grid-template-columns:1fr 1fr}.drawer{width:100vw}}
 </style>
 </head>
 <body>
@@ -275,23 +341,26 @@ function renderDashboardHtml(initialPage: "requests" | "models"): string {
   <aside class="side"><div class="brand">Adaptive Router</div><nav class="nav"><button id="nav-requests">Routing Decisions</button><button id="nav-models">Models</button><button onclick="window.open('./docs/en/quickstart.md','_blank')">Docs</button></nav></aside>
   <main>
     <section id="page-requests"><div class="header"><div><h1>Routing Decisions</h1><p>Inspect how each agent request was routed across quality, latency, and token cost.</p></div><button class="close" onclick="location.reload()">Refresh</button></div><div id="metrics" class="cards"></div><div class="toolbar"><input id="search" placeholder="Search request id/model" /><select id="status"><option value="">All status</option><option>success</option><option>fallback_success</option><option>failed</option></select></div><div id="requests"></div></section>
-    <section id="page-models" class="hidden"><div class="header"><div><h1>Models</h1><p>Review configured models, provider health, and routing capabilities.</p></div></div><div id="models"></div></section>
+    <section id="page-models" class="hidden"><div class="header"><div><h1>Models</h1><p>Review configured models, provider health, and routing capabilities. Tick rows to compare them side by side.</p></div></div><div class="toolbar"><input id="model-search" placeholder="Filter by model id / provider" /><button id="compare-btn">Compare selected</button><button id="compare-clear" class="ghost">Clear</button></div><div id="compare"></div><div id="models"></div></section>
   </main>
 </div>
 <div id="drawer" class="drawer hidden"></div>
 <script>
-const state={page:${JSON.stringify(initialPage)},requests:[],models:[]};
+const state={page:${JSON.stringify(initialPage)},requests:[],models:[],compare:[]};
 const $=id=>document.getElementById(id);
 async function api(path){const res=await fetch(path); if(!res.ok) throw new Error(await res.text()); const payload=await res.json(); return payload.data;}
 function setPage(page){state.page=page; $('page-requests').classList.toggle('hidden',page!=='requests'); $('page-models').classList.toggle('hidden',page!=='models'); $('nav-requests').classList.toggle('active',page==='requests'); $('nav-models').classList.toggle('active',page==='models'); history.replaceState(null,'',page==='models'?'/models':'/requests');}
 function fmtCost(v){return v==null?'n/a':'$'+Number(v).toFixed(6)}
 function badge(v){return '<span class="badge '+String(v)+'">'+String(v)+'</span>'}
 function renderMetrics(items){$('metrics').innerHTML=items.map(m=>'<div class="card"><span>'+m.label+'</span><strong>'+m.value+'</strong></div>').join('')}
-function renderRequests(){const q=$('search').value.toLowerCase(); const s=$('status').value; const rows=state.requests.filter(r=>(!s||r.status===s)&&(!q||String(r.requestId).toLowerCase().includes(q)||String(r.selectedModel||'').toLowerCase().includes(q))); $('requests').innerHTML=rows.length?'<table><thead><tr><th>timestamp</th><th>request id</th><th>status</th><th>selected model</th><th>latency</th><th>tokens</th><th>cost</th><th>fallbacks</th></tr></thead><tbody>'+rows.map(r=>'<tr tabindex="0" data-request-id="'+r.requestId+'"><td class="mono">'+r.timestamp+'</td><td class="mono">'+r.requestId+'</td><td>'+badge(r.status)+'</td><td class="mono">'+(r.selectedModel||'n/a')+'</td><td>'+(r.latencyMs??'n/a')+'ms</td><td>'+(r.estimatedTokens??'n/a')+'</td><td>'+fmtCost(r.estimatedCostUsd)+'</td><td>'+r.fallbacks+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No routed requests yet. Run your agent locally and send the first request to populate this view.</div>'; document.querySelectorAll('[data-request-id]').forEach(row=>row.addEventListener('click',()=>openTrace(row.getAttribute('data-request-id'))))}
-function renderModels(){$('models').innerHTML=state.models.length?'<table><thead><tr><th>model id</th><th>provider</th><th>type</th><th>capabilities</th><th>health</th><th>latency p50</th><th>cost profile</th><th>enabled</th></tr></thead><tbody>'+state.models.map(m=>'<tr><td class="mono">'+m.modelId+'</td><td>'+m.provider+'</td><td>'+badge(m.type)+'</td><td>'+m.capabilities.map(badge).join(' ')+'</td><td>'+badge(m.health)+'</td><td>'+(m.latencyP50Ms??'n/a')+'</td><td>'+ (m.costProfile||'n/a') +'</td><td>'+m.enabled+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No models configured. Add models in your router config, then restart the local dashboard.</div>'}
+function renderRequests(){const q=$('search').value.toLowerCase(); const s=$('status').value; const rows=state.requests.filter(r=>(!s||r.status===s)&&(!q||String(r.requestId).toLowerCase().includes(q)||String(r.selectedModel||'').toLowerCase().includes(q))); $('requests').innerHTML=rows.length?'<table><thead><tr><th>timestamp</th><th>request id</th><th>status</th><th>selected model</th><th>latency</th><th>tokens</th><th>cost</th><th>fallbacks</th></tr></thead><tbody>'+rows.map(r=>'<tr tabindex="0" data-request-id="'+r.requestId+'"><td class="mono">'+r.timestamp+'</td><td class="mono">'+r.requestId+'</td><td>'+badge(r.status)+'</td><td class="mono">'+(r.selectedModel||'n/a')+'</td><td>'+(r.latencyMs??'n/a')+'ms</td><td>'+(r.estimatedTokens??'n/a')+'</td><td>'+fmtCost(r.estimatedCostUsd)+'</td><td>'+r.fallbacks+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No routed requests match this filter. Adjust the search or status, or run your agent to populate this view.</div>'; document.querySelectorAll('[data-request-id]').forEach(row=>row.addEventListener('click',()=>openTrace(row.getAttribute('data-request-id'))))}
+async function reloadRequests(){const params=new URLSearchParams(); const s=$('status').value; const q=$('search').value.trim(); if(s)params.set('status',s); if(q)params.set('search',q); const qs=params.toString(); state.requests=await api('/api/requests'+(qs?'?'+qs:'')); renderRequests();}
+function visibleModels(){const q=($('model-search').value||'').toLowerCase(); return state.models.filter(m=>!q||m.modelId.toLowerCase().includes(q)||m.provider.toLowerCase().includes(q));}
+function renderModels(){const rows=visibleModels(); $('models').innerHTML=rows.length?'<table><thead><tr><th></th><th>model id</th><th>provider</th><th>type</th><th>capabilities</th><th>health</th><th>latency p50</th><th>cost profile</th><th>enabled</th></tr></thead><tbody>'+rows.map(m=>'<tr><td><input type="checkbox" class="cmp" value="'+m.modelId+'"'+(state.compare.includes(m.modelId)?' checked':'')+' /></td><td class="mono">'+m.modelId+'</td><td>'+m.provider+'</td><td>'+badge(m.type)+'</td><td>'+m.capabilities.map(badge).join(' ')+'</td><td>'+badge(m.health)+'</td><td>'+(m.latencyP50Ms??'n/a')+'</td><td>'+ (m.costProfile||'n/a') +'</td><td>'+m.enabled+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No models match this filter.</div>'; document.querySelectorAll('.cmp').forEach(cb=>cb.addEventListener('change',()=>{const id=cb.value; if(cb.checked){if(!state.compare.includes(id))state.compare.push(id);}else{state.compare=state.compare.filter(x=>x!==id);}}))}
+async function runCompare(){if(state.compare.length<1){$('compare').innerHTML='<div class="empty">Tick at least one model row to compare.</div>';return;} const c=await api('/api/models/compare?ids='+encodeURIComponent(state.compare.join(','))); const head='<tr><th>field</th>'+c.models.map(m=>'<th class="mono">'+m.modelId+(m.found?'':' (not configured)')+'</th>').join('')+'</tr>'; const rowOf=(label,fn)=>'<tr><td>'+label+'</td>'+c.models.map(m=>'<td>'+fn(m)+'</td>').join('')+'</tr>'; const matrix=c.capabilityMatrix.map(r=>'<tr><td>'+r.capability+'</td>'+r.support.map(s=>'<td>'+(s?'✓':'·')+'</td>').join('')+'</tr>').join(''); $('compare').innerHTML='<table class="cmp-table"><thead>'+head+'</thead><tbody>'+rowOf('provider',m=>m.provider)+rowOf('type',m=>badge(m.type))+rowOf('health',m=>badge(m.health))+rowOf('latency p50',m=>(m.latencyP50Ms??'n/a'))+rowOf('cost profile',m=>(m.costProfile||'n/a'))+rowOf('enabled',m=>m.enabled)+'<tr><td colspan="'+(c.models.length+1)+'"><strong>Capabilities</strong></td></tr>'+matrix+'</tbody></table>';}
 async function openTrace(id){const d=await api('/api/requests/'+encodeURIComponent(id)); const el=$('drawer'); el.classList.remove('hidden'); el.innerHTML='<button class="close" id="drawer-close">Close</button><h2 class="mono">'+id+'</h2><h3>Decision summary</h3><p>'+d.decisionSummary+'</p><h3>Candidate models</h3><pre>'+JSON.stringify(d.candidateModels,null,2)+'</pre><h3>Attempts timeline</h3><pre>'+JSON.stringify(d.attempts,null,2)+'</pre><h3>Estimated usage</h3><pre>'+JSON.stringify(d.estimatedUsage||{},null,2)+'</pre>'; $('drawer-close').onclick=()=>el.classList.add('hidden')}
 async function load(){setPage(state.page); renderMetrics(await api('/api/metrics/summary')); state.requests=await api('/api/requests'); state.models=await api('/api/models'); renderRequests(); renderModels();}
-$('nav-requests').onclick=()=>setPage('requests'); $('nav-models').onclick=()=>setPage('models'); $('search').oninput=renderRequests; $('status').onchange=renderRequests; load().catch(e=>{document.querySelector('main').innerHTML='<div class="empty">'+e.message+'</div>'});
+$('nav-requests').onclick=()=>setPage('requests'); $('nav-models').onclick=()=>setPage('models'); $('search').oninput=reloadRequests; $('status').onchange=reloadRequests; $('model-search').oninput=renderModels; $('compare-btn').onclick=runCompare; $('compare-clear').onclick=()=>{state.compare=[]; $('compare').innerHTML=''; renderModels();}; load().catch(e=>{document.querySelector('main').innerHTML='<div class="empty">'+e.message+'</div>'});
 </script>
 </body>
 </html>`
@@ -346,4 +415,54 @@ function formatCostProfile(cost: DashboardModel["cost"]): string | undefined {
   const input = cost.inputPer1M ?? 0
   const output = cost.outputPer1M ?? input
   return `$${input}/$${output} per 1M tokens${cost.estimated ? " estimated" : ""}`
+}
+
+/**
+ * Apply a {@link RequestFilter} to already-mapped request rows. Kept as a pure
+ * function so both the data-access layer and tests exercise identical logic.
+ */
+export function applyRequestFilter(rows: RequestRow[], filter?: RequestFilter): RequestRow[] {
+  if (!filter) return rows
+  const search = filter.search?.toLowerCase()
+  const model = filter.model?.toLowerCase()
+  const filtered = rows.filter((row) => {
+    if (filter.status && row.status !== filter.status) return false
+    if (model && !(row.selectedModel ?? "").toLowerCase().includes(model)) return false
+    if (search) {
+      const haystack = `${row.requestId} ${row.selectedModel ?? ""}`.toLowerCase()
+      if (!haystack.includes(search)) return false
+    }
+    return true
+  })
+  return filter.limit !== undefined && filter.limit >= 0 ? filtered.slice(0, filter.limit) : filtered
+}
+
+/**
+ * Build a side-by-side {@link ModelComparison} from the full model list and a
+ * set of requested ids. Unknown ids still get a column (`found: false`) so the
+ * UI can show "not configured" rather than silently dropping a selection. The
+ * capability matrix is the sorted union of every selected model's capabilities.
+ */
+export function buildModelComparison(allModels: ModelRow[], modelIds: string[]): ModelComparison {
+  const columns: ModelComparisonColumn[] = modelIds.map((id) => {
+    const match = allModels.find((model) => model.modelId === id)
+    if (match) return { ...match, found: true }
+    return {
+      modelId: id,
+      provider: "—",
+      type: "open-source",
+      capabilities: [],
+      health: "unknown",
+      enabled: false,
+      found: false,
+    }
+  })
+
+  const capabilities = [...new Set(columns.flatMap((column) => column.capabilities))].sort()
+  const capabilityMatrix = capabilities.map((capability) => ({
+    capability,
+    support: columns.map((column) => column.capabilities.includes(capability)),
+  }))
+
+  return { models: columns, capabilityMatrix }
 }

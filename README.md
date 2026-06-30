@@ -236,7 +236,7 @@ The first milestone is intentionally small:
 | Stage | Focus | Status |
 |---|---|---|
 | MVP-0 | SDK routing, providers, durable storage, local dashboard, CLI | ✅ Complete |
-| MVP-1 | Framework adapters (LangChain ✅ / Vercel AI SDK ✅), more providers (Gemini ✅ / Qwen ✅ / vLLM ✅), dashboard filtering | 🔵 In progress |
+| MVP-1 | Framework adapters (LangChain ✅ / Vercel AI SDK ✅), more providers (Gemini ✅ / Qwen ✅ / vLLM ✅), dashboard filtering + model comparison ✅ | 🔵 In progress |
 | MVP-2 | Eval harness, route learning, cache, context compression | ⬜ Planned |
 | MVP-3 | Team / enterprise / SaaS control plane | ⬜ Future |
 
