@@ -109,6 +109,32 @@ const dashboard = await createDashboard({
 console.log(dashboard.url)
 ```
 
+## Use it inside LangChain / LangGraph
+
+`createLangChainModel(router)` wraps the router as a LangChain-compatible chat
+model — no `@langchain/core` dependency required. It accepts the message shapes
+LangChain and LangGraph already produce (plain strings, `[role, content]`
+tuples, OpenAI-style objects, or `BaseMessage`s) and returns an `AIMessage`-like
+value that also carries the full `routerTrace`, so the router's explainability
+survives the framework hop.
+
+```ts
+import { createLangChainModel, createRouter } from '@adaptive-router/sdk'
+
+const model = createLangChainModel(router, { route: { quality: 'high' } })
+
+const ai = await model.invoke([
+  ['system', 'You are concise.'],
+  ['human', 'Plan the next coding task.'],
+])
+
+console.log(ai.content)            // assistant text
+console.log(ai.routerTrace.chosenModel) // which model the router picked, and why
+```
+
+Drop the same `model` into a LangGraph node — its `invoke`/`batch` methods and
+`AIMessage`-shaped output work with the `add_messages` reducer out of the box.
+
 ## Architecture
 
 ```mermaid
@@ -185,7 +211,7 @@ The first milestone is intentionally small:
 | Stage | Focus | Status |
 |---|---|---|
 | MVP-0 | SDK routing, providers, durable storage, local dashboard, CLI | ✅ Complete |
-| MVP-1 | Framework adapters, more providers (Gemini ✅ / Qwen ✅ / vLLM ✅), dashboard filtering | 🔵 In progress |
+| MVP-1 | Framework adapters (LangChain ✅), more providers (Gemini ✅ / Qwen ✅ / vLLM ✅), dashboard filtering | 🔵 In progress |
 | MVP-2 | Eval harness, route learning, cache, context compression | ⬜ Planned |
 | MVP-3 | Team / enterprise / SaaS control plane | ⬜ Future |
 
@@ -204,7 +230,7 @@ Useful starter areas:
 - routing policy examples
 - dashboard empty states
 - CLI help snapshots
-- LangChain / Vercel AI SDK framework adapters
+- LangChain ✅ / Vercel AI SDK framework adapters
 - SQLite compatibility
 - CI matrix expansion
 
@@ -225,8 +251,8 @@ init config -> route agent request -> store traces -> inspect dashboard -> expor
 ```
 
 The project is now in **MVP-1**, expanding provider and framework coverage
-(Gemini, Qwen, and self-hosted vLLM shipped; LangChain and Vercel AI SDK
-adapters next).
+(Gemini, Qwen, self-hosted vLLM, and a dependency-free LangChain/LangGraph
+adapter shipped; the Vercel AI SDK adapter is next).
 Development runs through a quality-gated workflow — every change passes
 lint → typecheck → build → test → smoke and lands on `main` via a reviewed,
 squash-merged PR. See [WORKFLOW.md](WORKFLOW.md) and [ROADMAP.md](ROADMAP.md).
