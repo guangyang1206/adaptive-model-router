@@ -43,7 +43,7 @@ and broaden provider coverage. **In progress.**
 
 - ✅ Gemini adapter (native `generateContent`, header auth, tool mapping)
 - ✅ Qwen adapter (DashScope OpenAI-compatible mode)
-- 🔵 vLLM support (OpenAI-compatible; reuses the compatible-provider base)
+- ✅ vLLM support (self-hosted, OpenAI-compatible; optional auth, zero-cost profile)
 - ⬜ LangChain / LangGraph adapter
 - ⬜ Vercel AI SDK adapter
 - ⬜ Dashboard filtering and model comparison

@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createQwenProvider, createGeminiProvider, createAnthropicProvider } from "../dist/index.js"
+import { createQwenProvider, createGeminiProvider, createAnthropicProvider, createVLLMProvider } from "../dist/index.js"
 
 test("qwen provider exposes OpenAI-compatible default models", async () => {
   const provider = createQwenProvider({ apiKey: "test-key" })
@@ -285,3 +285,96 @@ test("gemini provider surfaces an auth error when apiKey is missing", async () =
     },
   )
 })
+
+test("vllm provider exposes a self-hosted, zero-cost model profile", async () => {
+  const provider = createVLLMProvider({
+    baseURL: "http://localhost:8000/v1",
+    model: "meta-llama/Llama-3.1-8B-Instruct",
+  })
+  assert.equal(provider.id, "vllm")
+  assert.equal(provider.kind, "self-hosted")
+
+  const models = await provider.listModels()
+  assert.equal(models.length, 1)
+  const [model] = models
+  assert.equal(model.id, "vllm/meta-llama/Llama-3.1-8B-Instruct")
+  assert.equal(model.model, "meta-llama/Llama-3.1-8B-Instruct")
+  assert.equal(model.type, "self-hosted")
+  assert.equal(model.kind, "self-hosted")
+  assert.equal(model.cost?.inputPer1M, 0)
+  assert.equal(model.cost?.outputPer1M, 0)
+  // tool-calling must not be advertised unless the caller opts in.
+  assert.ok(!model.capabilities.includes("tool-calling"))
+})
+
+test("vllm provider calls a key-less server without an Authorization header", async () => {
+  const calls = []
+  const mockFetch = async (url, init) => {
+    calls.push({ url: String(url), init })
+    return new Response(
+      JSON.stringify({ id: "cmpl-1", choices: [{ message: { content: "ok" } }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }
+
+  const provider = createVLLMProvider({
+    baseURL: "http://localhost:8000/v1",
+    model: "llama-3.1-8b",
+    fetch: mockFetch,
+  })
+  const [model] = await provider.listModels()
+  const response = await provider.chat({ messages: [{ role: "user", content: "hi" }] }, model)
+
+  assert.equal(calls[0].url, "http://localhost:8000/v1/chat/completions")
+  // No --api-key on the server => no Authorization header (avoids "Bearer undefined").
+  assert.equal(calls[0].init.headers.authorization, undefined)
+  assert.equal(response.content, "ok")
+})
+
+test("vllm provider attaches Authorization only when an apiKey is supplied", async () => {
+  const calls = []
+  const mockFetch = async (url, init) => {
+    calls.push({ url: String(url), init })
+    return new Response(
+      JSON.stringify({ id: "cmpl-2", choices: [{ message: { content: "ok" } }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }
+
+  const provider = createVLLMProvider({
+    baseURL: "http://gpu-box:8000/v1",
+    model: "qwen2.5-7b",
+    apiKey: "vllm-secret",
+    fetch: mockFetch,
+  })
+  const [model] = await provider.listModels()
+  await provider.chat({ messages: [{ role: "user", content: "hi" }] }, model)
+
+  assert.equal(calls[0].init.headers.authorization, "Bearer vllm-secret")
+})
+
+test("vllm provider honors custom models and capabilities opt-in", async () => {
+  const provider = createVLLMProvider({
+    baseURL: "http://localhost:8000/v1",
+    model: "tool-capable-model",
+    capabilities: ["reasoning", "tool-calling", "streaming"],
+    contextWindow: 32768,
+    tier: "high",
+  })
+  const [model] = await provider.listModels()
+  assert.ok(model.capabilities.includes("tool-calling"))
+  assert.equal(model.contextWindow, 32768)
+  assert.equal(model.tier, "high")
+})
+
+test("vllm provider throws an invalid-request error when baseURL is missing", () => {
+  assert.throws(
+    () => createVLLMProvider({ model: "llama-3.1-8b" }),
+    (error) => {
+      assert.equal(error.code, "AR_INVALID_REQUEST")
+      assert.equal(error.retryable, false)
+      return true
+    },
+  )
+})
+

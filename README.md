@@ -24,7 +24,7 @@ Adaptive Model Router focuses on an embeddable routing layer that can see agent 
 - Route agent requests through a TypeScript SDK
 - Score candidates by capability, model tier, health/success signal, latency, and cost
 - Fall back on retryable non-streaming failures
-- Normalize OpenAI, Anthropic, Gemini, DeepSeek, Qwen, and Ollama provider calls
+- Normalize OpenAI, Anthropic, Gemini, DeepSeek, Qwen, vLLM, and Ollama provider calls
 - Store traces with SQLite or JSONL fallback
 - Open a local read-only dashboard with Requests and Models pages
 - Inspect/export traces from a small CLI
@@ -52,6 +52,7 @@ import {
   createOllamaProvider,
   createOpenAIProvider,
   createQwenProvider,
+  createVLLMProvider,
   createRouter,
   createSQLiteTraceStore,
 } from '@adaptive-router/sdk'
@@ -69,6 +70,12 @@ const router = createRouter({
     createDeepSeekProvider({ apiKey: process.env.DEEPSEEK_API_KEY }),
     createQwenProvider({ apiKey: process.env.DASHSCOPE_API_KEY }),
     createOllamaProvider({ baseURL: process.env.OLLAMA_BASE_URL }),
+    // Self-hosted vLLM: point at your OpenAI-compatible server and name the
+    // served model. No apiKey needed unless you started vLLM with --api-key.
+    createVLLMProvider({
+      baseURL: process.env.VLLM_BASE_URL ?? 'http://localhost:8000/v1',
+      model: 'meta-llama/Llama-3.1-8B-Instruct',
+    }),
   ],
   policy: {
     defaultQuality: 'balanced',
@@ -115,6 +122,7 @@ flowchart LR
   D --> D4[Ollama]
   D --> D5[Qwen]
   D --> D6[Gemini]
+  D --> D7[vLLM self-hosted]
   B --> E[Trace Store]
   E --> E1[SQLite]
   E --> E2[JSONL fallback]
@@ -177,7 +185,7 @@ The first milestone is intentionally small:
 | Stage | Focus | Status |
 |---|---|---|
 | MVP-0 | SDK routing, providers, durable storage, local dashboard, CLI | ✅ Complete |
-| MVP-1 | Framework adapters, more providers (Gemini ✅ / Qwen ✅ / vLLM 🔵), dashboard filtering | 🔵 In progress |
+| MVP-1 | Framework adapters, more providers (Gemini ✅ / Qwen ✅ / vLLM ✅), dashboard filtering | 🔵 In progress |
 | MVP-2 | Eval harness, route learning, cache, context compression | ⬜ Planned |
 | MVP-3 | Team / enterprise / SaaS control plane | ⬜ Future |
 
@@ -196,7 +204,7 @@ Useful starter areas:
 - routing policy examples
 - dashboard empty states
 - CLI help snapshots
-- Qwen / Gemini / vLLM provider adapters
+- LangChain / Vercel AI SDK framework adapters
 - SQLite compatibility
 - CI matrix expansion
 
@@ -217,7 +225,8 @@ init config -> route agent request -> store traces -> inspect dashboard -> expor
 ```
 
 The project is now in **MVP-1**, expanding provider and framework coverage
-(Gemini and Qwen shipped; vLLM, LangChain, and Vercel AI SDK adapters next).
+(Gemini, Qwen, and self-hosted vLLM shipped; LangChain and Vercel AI SDK
+adapters next).
 Development runs through a quality-gated workflow — every change passes
 lint → typecheck → build → test → smoke and lands on `main` via a reviewed,
 squash-merged PR. See [WORKFLOW.md](WORKFLOW.md) and [ROADMAP.md](ROADMAP.md).
