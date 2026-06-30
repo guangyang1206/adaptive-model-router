@@ -45,7 +45,7 @@ and broaden provider coverage. **In progress.**
 - ✅ Qwen adapter (DashScope OpenAI-compatible mode)
 - ✅ vLLM support (self-hosted, OpenAI-compatible; optional auth, zero-cost profile)
 - ✅ LangChain / LangGraph adapter (dependency-free `createLangChainModel`)
-- ⬜ Vercel AI SDK adapter
+- ✅ Vercel AI SDK adapter (dependency-free `createVercelModel`, `LanguageModelV1`)
 - ⬜ Dashboard filtering and model comparison
 - ⬜ Policy dry-run UI
 - ⬜ Local Proxy / HTTP Bridge

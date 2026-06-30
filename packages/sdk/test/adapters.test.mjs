@@ -5,6 +5,8 @@ import {
   createStaticProvider,
   createLangChainModel,
   normalizeLangChainMessages,
+  createVercelModel,
+  normalizeVercelPrompt,
 } from "../dist/index.js"
 
 // A minimal model registry + static provider that always succeeds, so the
@@ -131,4 +133,104 @@ test("batch routes each input and preserves order", async () => {
     assert.equal(ai._getType(), "ai")
     assert.equal(ai.routerTrace.chosenModel, "local/demo")
   }
+})
+
+// ---------------------------------------------------------------------------
+// Vercel AI SDK adapter
+// ---------------------------------------------------------------------------
+
+test("createVercelModel quacks like a LanguageModelV1", () => {
+  const model = createVercelModel(makeRouter())
+  assert.equal(model.specificationVersion, "v1")
+  assert.equal(model.provider, "adaptive-router")
+  assert.equal(model.modelId, "adaptive-router")
+  assert.equal(typeof model.doGenerate, "function")
+  assert.equal(typeof model.doStream, "function")
+})
+
+test("doGenerate returns text, usage, finishReason, and carries the trace", async () => {
+  const model = createVercelModel(makeRouter())
+  const result = await model.doGenerate({
+    prompt: [
+      { role: "system", content: "Be concise." },
+      { role: "user", content: [{ type: "text", text: "Say hi." }] },
+    ],
+  })
+
+  assert.equal(typeof result.text, "string")
+  assert.equal(result.finishReason, "stop")
+  assert.equal(typeof result.usage.promptTokens, "number")
+  assert.equal(typeof result.usage.completionTokens, "number")
+  // Explainability survives the Vercel hop in both surfaced places.
+  assert.equal(result.providerMetadata.adaptiveRouter.routerTrace.chosenModel, "local/demo")
+  assert.equal(result.rawResponse.routerTrace.chosenModel, "local/demo")
+  assert.equal(result.rawResponse.routerTrace.status, "success")
+})
+
+test("doStream emits a text-delta then a finish event with the trace", async () => {
+  const model = createVercelModel(makeRouter())
+  const { stream } = await model.doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "stream please" }] }],
+  })
+
+  const events = []
+  const reader = stream.getReader()
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    events.push(value)
+  }
+
+  const finish = events.find((event) => event.type === "finish")
+  assert.ok(events.some((event) => event.type === "text-delta"))
+  assert.ok(finish)
+  assert.equal(finish.finishReason, "stop")
+  assert.equal(finish.providerMetadata.adaptiveRouter.routerTrace.chosenModel, "local/demo")
+})
+
+test("normalizeVercelPrompt maps roles and flattens content parts", () => {
+  // String content (system) is kept; part arrays are flattened; tool-call args
+  // and tool-result payloads are stringified so nothing silently vanishes.
+  assert.deepEqual(
+    normalizeVercelPrompt([
+      { role: "system", content: "sys" },
+      { role: "user", content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] },
+      { role: "assistant", content: [{ type: "tool-call", toolName: "f", args: { x: 1 } }] },
+      { role: "tool", content: [{ type: "tool-result", result: "done" }] },
+    ]),
+    [
+      { role: "system", content: "sys" },
+      { role: "user", content: "ab" },
+      { role: "assistant", content: '{"x":1}' },
+      { role: "tool", content: "done" },
+    ],
+  )
+})
+
+test("doGenerate forwards tools and merges route hints over defaults", async () => {
+  const seen = []
+  const spyRouter = {
+    async chat(request) {
+      seen.push(request)
+      return {
+        response: { content: "ok" },
+        routerTrace: { traceId: "t", decisionId: "d", candidates: [], reason: "r", attempts: [], estimated: true, status: "success" },
+      }
+    },
+  }
+
+  const model = createVercelModel(spyRouter, { route: { quality: "balanced", task: "plan" } })
+  const tools = [{ type: "function", function: { name: "noop" } }]
+  await model.doGenerate({
+    prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+    mode: { type: "regular", tools },
+    providerMetadata: { adaptiveRouter: { route: { quality: "high" } } },
+  })
+
+  assert.equal(seen.length, 1)
+  // Per-call route hint overrides the default; default task is preserved.
+  assert.equal(seen[0].route.quality, "high")
+  assert.equal(seen[0].route.task, "plan")
+  assert.deepEqual(seen[0].tools, tools)
+  assert.deepEqual(seen[0].messages, [{ role: "user", content: "hello" }])
 })
