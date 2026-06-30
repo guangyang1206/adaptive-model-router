@@ -135,6 +135,11 @@ export function createAnthropicProvider(options: ProviderFactoryOptions): Provid
   const fetchImpl = options.fetch ?? defaultFetch
   const baseURL = trimTrailingSlash(options.baseURL ?? "https://api.anthropic.com/v1")
   const models = options.models ?? [
+    // NOTE: tool-calling is intentionally NOT advertised yet. The Anthropic
+    // adapter still passes OpenAI-shaped tools, which Anthropic's API does not
+    // accept. Advertising the capability would make the router select Anthropic
+    // for tool-calling requests and then silently drop the tools. Re-add
+    // "tool-calling" only once toAnthropicRequest maps to Anthropic's tool schema.
     createModelProfile({
       id: "anthropic/claude-3-5-haiku-latest",
       provider: "anthropic",
@@ -143,7 +148,7 @@ export function createAnthropicProvider(options: ProviderFactoryOptions): Provid
       kind: "native",
       tier: "balanced",
       contextWindow: 200000,
-      capabilities: ["reasoning", "tool-calling", "json-mode", "vision", "streaming"],
+      capabilities: ["reasoning", "json-mode", "vision", "streaming"],
       inputPer1M: 0.8,
       outputPer1M: 4,
     }),
@@ -155,7 +160,7 @@ export function createAnthropicProvider(options: ProviderFactoryOptions): Provid
       kind: "native",
       tier: "high",
       contextWindow: 200000,
-      capabilities: ["reasoning", "tool-calling", "json-mode", "vision", "streaming"],
+      capabilities: ["reasoning", "json-mode", "vision", "streaming"],
       inputPer1M: 3,
       outputPer1M: 15,
     }),
@@ -413,7 +418,8 @@ function toAnthropicRequest(request: RouteRequest, model: ModelProfile) {
     max_tokens: 1024,
     system: system || undefined,
     messages,
-    tools: request.tools,
+    // tools intentionally omitted: see capability note in createAnthropicProvider.
+    // OpenAI-shaped tools are not valid Anthropic input and would be rejected.
     stream: request.stream ?? false,
   }
 }
@@ -436,7 +442,41 @@ function toGeminiRequest(request: RouteRequest) {
   return {
     contents,
     systemInstruction: system ? { parts: [{ text: system }] } : undefined,
+    // Gemini expects function tools wrapped as `tools: [{ functionDeclarations }]`,
+    // not the flat OpenAI `{ type: "function", function: {...} }` array. Translate
+    // so a tool-calling request that routes here actually carries its tools.
+    tools: toGeminiTools(request.tools),
   }
+}
+
+type OpenAIToolShape = {
+  type?: string
+  function?: { name?: string; description?: string; parameters?: unknown }
+}
+
+type GeminiFunctionDeclaration = { name: string; description?: string; parameters?: unknown }
+
+/**
+ * Map OpenAI-style tool definitions to Gemini's `functionDeclarations` shape.
+ * Returns `undefined` when there are no usable function tools, so the request
+ * body omits the `tools` field entirely rather than sending an empty array.
+ */
+function toGeminiTools(tools: unknown[] | undefined) {
+  if (!tools?.length) return undefined
+  const functionDeclarations = tools
+    .map((tool): GeminiFunctionDeclaration | undefined => {
+      const fn = (tool as OpenAIToolShape)?.function
+      if (!fn?.name) return undefined
+      return {
+        name: fn.name,
+        description: fn.description,
+        parameters: fn.parameters,
+      }
+    })
+    .filter((declaration): declaration is GeminiFunctionDeclaration => declaration !== undefined)
+
+  if (functionDeclarations.length === 0) return undefined
+  return [{ functionDeclarations }]
 }
 
 function toOllamaRequest(request: RouteRequest, model: ModelProfile) {

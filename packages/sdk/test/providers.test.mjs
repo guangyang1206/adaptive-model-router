@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createQwenProvider, createGeminiProvider } from "../dist/index.js"
+import { createQwenProvider, createGeminiProvider, createAnthropicProvider } from "../dist/index.js"
 
 test("qwen provider exposes OpenAI-compatible default models", async () => {
   const provider = createQwenProvider({ apiKey: "test-key" })
@@ -147,6 +147,107 @@ test("gemini provider posts generateContent, maps roles, and parses usageMetadat
   assert.equal(response.usage?.outputTokens, 4)
   assert.equal(response.usage?.totalTokens, 16)
   assert.equal(response.usage?.estimated, false)
+})
+
+test("anthropic provider does not advertise tool-calling until the schema is mapped", async () => {
+  // Guard against silently re-adding tool-calling: the adapter still sends
+  // OpenAI-shaped tools, which Anthropic rejects. Advertising the capability
+  // would make the router pick Anthropic for tool requests and drop the tools.
+  const provider = createAnthropicProvider({ apiKey: "test-key" })
+  const models = await provider.listModels()
+  assert.ok(models.length > 0)
+  for (const model of models) {
+    assert.ok(
+      !model.capabilities.includes("tool-calling"),
+      `${model.id} must not advertise tool-calling yet`,
+    )
+  }
+})
+
+test("anthropic provider omits tools from the request body", async () => {
+  const calls = []
+  const mockFetch = async (url, init) => {
+    calls.push({ url: String(url), init })
+    return new Response(
+      JSON.stringify({ id: "msg-1", content: [{ type: "text", text: "ok" }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }
+
+  const provider = createAnthropicProvider({ apiKey: "k", fetch: mockFetch })
+  const [model] = await provider.listModels()
+  await provider.chat(
+    {
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ type: "function", function: { name: "noop" } }],
+    },
+    model,
+  )
+
+  const body = JSON.parse(calls[0].init.body)
+  assert.equal(body.tools, undefined)
+})
+
+test("gemini provider maps OpenAI-style tools to functionDeclarations", async () => {
+  const calls = []
+  const mockFetch = async (url, init) => {
+    calls.push({ url: String(url), init })
+    return new Response(
+      JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }
+
+  const provider = createGeminiProvider({ apiKey: "k", fetch: mockFetch })
+  const [model] = await provider.listModels()
+
+  await provider.chat(
+    {
+      messages: [{ role: "user", content: "what's the weather?" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "get_weather",
+            description: "Get weather for a city",
+            parameters: { type: "object", properties: { city: { type: "string" } } },
+          },
+        },
+      ],
+    },
+    model,
+  )
+
+  const body = JSON.parse(calls[0].init.body)
+  // Tools must arrive wrapped as Gemini functionDeclarations, NOT the flat OpenAI shape.
+  assert.ok(Array.isArray(body.tools))
+  assert.equal(body.tools.length, 1)
+  const decls = body.tools[0].functionDeclarations
+  assert.equal(decls.length, 1)
+  assert.equal(decls[0].name, "get_weather")
+  assert.equal(decls[0].description, "Get weather for a city")
+  assert.deepEqual(decls[0].parameters, {
+    type: "object",
+    properties: { city: { type: "string" } },
+  })
+})
+
+test("gemini provider omits the tools field when no tools are given", async () => {
+  const calls = []
+  const mockFetch = async (url, init) => {
+    calls.push({ url: String(url), init })
+    return new Response(
+      JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }
+
+  const provider = createGeminiProvider({ apiKey: "k", fetch: mockFetch })
+  const [model] = await provider.listModels()
+  await provider.chat({ messages: [{ role: "user", content: "hi" }] }, model)
+
+  const body = JSON.parse(calls[0].init.body)
+  assert.equal(body.tools, undefined)
 })
 
 test("gemini provider honors a custom baseURL override", async () => {
