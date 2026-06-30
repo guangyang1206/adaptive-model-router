@@ -177,3 +177,186 @@ function toLangChainAIMessage(content: string, routerTrace: RouterTrace): LangCh
     routerTrace,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Vercel AI SDK adapter
+//
+// Design: the same dependency-free *structural* bridge as the LangChain adapter.
+// We do NOT import the `ai` package — pinning a peer dependency on a fast-moving
+// SDK is exactly the coupling this router exists to avoid. Instead we implement
+// the `LanguageModelV1` contract the Vercel AI SDK calls into:
+//   - `specificationVersion: "v1"`, `provider`, `modelId`, `defaultObjectGenerationMode`
+//   - `doGenerate(options)` -> `{ text, finishReason, usage, rawCall, rawResponse,
+//     providerMetadata }`. The SDK's `generateText()` awaits exactly this shape.
+//   - `doStream(options)` returns a single-chunk ReadableStream so `streamText()`
+//     resolves; true token streaming is a post-MVP follow-up (the router itself
+//     disables fallbacks under `stream`, so a one-shot text-delta + finish is
+//     the honest MVP behavior).
+//
+// Vercel's prompt is a `LanguageModelV1Prompt`: an array of messages whose
+// `content` is either a string (system) or an array of typed parts
+// (`{ type: "text", text }`, plus tool-call/-result parts we flatten for MVP
+// parity with the other adapters). We map that onto the router's ChatMessage[]
+// and surface the full routerTrace through `providerMetadata.adaptiveRouter`
+// and `rawResponse`, so explainability survives the Vercel hop.
+// ---------------------------------------------------------------------------
+
+/** A Vercel AI SDK content part (the subset we read). */
+export type VercelContentPart =
+  | { type: "text"; text: string }
+  | { type: "tool-call"; toolName?: string; args?: unknown }
+  | { type: "tool-result"; result?: unknown }
+  | { type: string; [key: string]: unknown }
+
+/** A single message in a Vercel `LanguageModelV1Prompt`. */
+export type VercelPromptMessage = {
+  role: "system" | "user" | "assistant" | "tool"
+  content: string | VercelContentPart[]
+}
+
+/** Options the Vercel AI SDK passes into `doGenerate` / `doStream`. */
+export type VercelCallOptions = {
+  prompt: VercelPromptMessage[]
+  mode?: { type?: string; tools?: RouteRequest["tools"] }
+  /** Routing hints forwarded to `router.chat`. Merged over the model defaults. */
+  providerMetadata?: { adaptiveRouter?: { route?: RouteRequest["route"]; metadata?: Record<string, unknown> } }
+}
+
+/** The result `doGenerate` resolves with — the shape `generateText()` expects. */
+export type VercelGenerateResult = {
+  text: string
+  finishReason: "stop" | "error"
+  usage: { promptTokens: number; completionTokens: number }
+  rawCall: { rawPrompt: unknown; rawSettings: Record<string, unknown> }
+  rawResponse: { routerTrace: RouterTrace }
+  providerMetadata: { adaptiveRouter: { routerTrace: RouterTrace } }
+}
+
+/** A Vercel AI SDK `LanguageModelV1`-compatible model backed by the router. */
+export type VercelLanguageModel = {
+  specificationVersion: "v1"
+  provider: string
+  modelId: string
+  defaultObjectGenerationMode: undefined
+  doGenerate(options: VercelCallOptions): Promise<VercelGenerateResult>
+  doStream(options: VercelCallOptions): Promise<{
+    stream: ReadableStream<unknown>
+    rawCall: { rawPrompt: unknown; rawSettings: Record<string, unknown> }
+  }>
+}
+
+/** Defaults applied to every call made through a {@link VercelLanguageModel}. */
+export type VercelModelOptions = {
+  route?: RouteRequest["route"]
+  metadata?: Record<string, unknown>
+}
+
+/**
+ * Wrap an {@link AdaptiveRouter} as a Vercel AI SDK `LanguageModelV1`.
+ *
+ * @example
+ * ```ts
+ * import { generateText } from "ai"
+ * const model = createVercelModel(router, { route: { quality: "high" } })
+ * const { text, providerMetadata } = await generateText({
+ *   model,
+ *   prompt: "Say hi.",
+ * })
+ * console.log(text, providerMetadata.adaptiveRouter.routerTrace.chosenModel)
+ * ```
+ */
+export function createVercelModel(
+  router: Pick<AdaptiveRouter, "chat">,
+  defaults: VercelModelOptions = {},
+): VercelLanguageModel {
+  async function run(options: VercelCallOptions): Promise<{ content: string; routerTrace: RouterTrace }> {
+    const messages = normalizeVercelPrompt(options.prompt)
+    const callMeta = options.providerMetadata?.adaptiveRouter
+    const result = await router.chat({
+      messages,
+      tools: options.mode?.tools,
+      route: { ...defaults.route, ...callMeta?.route },
+      metadata: { ...defaults.metadata, ...callMeta?.metadata },
+    })
+    return { content: result.response.content ?? "", routerTrace: result.routerTrace }
+  }
+
+  const rawCall = { rawPrompt: null, rawSettings: {} as Record<string, unknown> }
+
+  return {
+    specificationVersion: "v1",
+    provider: "adaptive-router",
+    modelId: "adaptive-router",
+    defaultObjectGenerationMode: undefined,
+    async doGenerate(options: VercelCallOptions): Promise<VercelGenerateResult> {
+      const { content, routerTrace } = await run(options)
+      const failed = routerTrace.status === "failed"
+      return {
+        text: content,
+        finishReason: failed ? "error" : "stop",
+        usage: {
+          promptTokens: routerTrace.usage?.inputTokens ?? 0,
+          completionTokens: routerTrace.usage?.outputTokens ?? 0,
+        },
+        rawCall,
+        rawResponse: { routerTrace },
+        providerMetadata: { adaptiveRouter: { routerTrace } },
+      }
+    },
+    async doStream(options: VercelCallOptions) {
+      const { content, routerTrace } = await run(options)
+      // MVP streaming: emit the resolved text as a single delta, then a finish
+      // event carrying usage + the trace. The router disables fallbacks under
+      // stream mode, so a one-shot emission is the honest behavior here.
+      const stream = new ReadableStream({
+        start(controller) {
+          if (content) controller.enqueue({ type: "text-delta", textDelta: content })
+          controller.enqueue({
+            type: "finish",
+            finishReason: routerTrace.status === "failed" ? "error" : "stop",
+            usage: {
+              promptTokens: routerTrace.usage?.inputTokens ?? 0,
+              completionTokens: routerTrace.usage?.outputTokens ?? 0,
+            },
+            providerMetadata: { adaptiveRouter: { routerTrace } },
+          })
+          controller.close()
+        },
+      })
+      return { stream, rawCall }
+    },
+  }
+}
+
+/**
+ * Normalize a Vercel `LanguageModelV1Prompt` into the router's `ChatMessage[]`.
+ * Exported so callers (and tests) can reuse the exact mapping the adapter uses.
+ */
+export function normalizeVercelPrompt(prompt: VercelPromptMessage[]): ChatMessage[] {
+  return prompt.map((message) => ({
+    role: mapRole(message.role),
+    content: extractVercelContent(message.content),
+  }))
+}
+
+/**
+ * Flatten Vercel content into a plain string. `content` is a string (system
+ * messages) or an array of parts; we keep `text` parts and stringify tool-call
+ * args / tool-result payloads so nothing silently vanishes in MVP.
+ */
+function extractVercelContent(content: string | VercelContentPart[]): string {
+  if (typeof content === "string") return content
+  return content
+    .map((part) => {
+      if (part.type === "text") return typeof part.text === "string" ? part.text : ""
+      if (part.type === "tool-call") return stringifyPart((part as { args?: unknown }).args)
+      if (part.type === "tool-result") return stringifyPart((part as { result?: unknown }).result)
+      return ""
+    })
+    .join("")
+}
+
+function stringifyPart(value: unknown): string {
+  if (value === undefined || value === null) return ""
+  return typeof value === "string" ? value : JSON.stringify(value)
+}

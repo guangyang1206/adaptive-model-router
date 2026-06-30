@@ -135,6 +135,31 @@ console.log(ai.routerTrace.chosenModel) // which model the router picked, and wh
 Drop the same `model` into a LangGraph node — its `invoke`/`batch` methods and
 `AIMessage`-shaped output work with the `add_messages` reducer out of the box.
 
+## Use it inside the Vercel AI SDK
+
+`createVercelModel(router)` wraps the router as a Vercel AI SDK `LanguageModelV1`
+— no `ai` package dependency required. Pass it straight to `generateText` /
+`streamText`; the router's `routerTrace` comes back through `providerMetadata`,
+so explainability survives this framework hop too.
+
+```ts
+import { generateText } from 'ai'
+import { createVercelModel, createRouter } from '@adaptive-router/sdk'
+
+const model = createVercelModel(router, { route: { quality: 'high' } })
+
+const { text, providerMetadata } = await generateText({
+  model,
+  prompt: 'Plan the next coding task.',
+})
+
+console.log(text)                                          // assistant text
+console.log(providerMetadata.adaptiveRouter.routerTrace.chosenModel) // and why
+```
+
+`streamText` works as well — the MVP adapter emits the routed response as a
+single text delta plus a finish event carrying usage and the trace.
+
 ## Architecture
 
 ```mermaid
@@ -211,7 +236,7 @@ The first milestone is intentionally small:
 | Stage | Focus | Status |
 |---|---|---|
 | MVP-0 | SDK routing, providers, durable storage, local dashboard, CLI | ✅ Complete |
-| MVP-1 | Framework adapters (LangChain ✅), more providers (Gemini ✅ / Qwen ✅ / vLLM ✅), dashboard filtering | 🔵 In progress |
+| MVP-1 | Framework adapters (LangChain ✅ / Vercel AI SDK ✅), more providers (Gemini ✅ / Qwen ✅ / vLLM ✅), dashboard filtering | 🔵 In progress |
 | MVP-2 | Eval harness, route learning, cache, context compression | ⬜ Planned |
 | MVP-3 | Team / enterprise / SaaS control plane | ⬜ Future |
 
@@ -230,7 +255,7 @@ Useful starter areas:
 - routing policy examples
 - dashboard empty states
 - CLI help snapshots
-- LangChain ✅ / Vercel AI SDK framework adapters
+- LangChain ✅ / Vercel AI SDK ✅ framework adapters
 - SQLite compatibility
 - CI matrix expansion
 
@@ -251,8 +276,8 @@ init config -> route agent request -> store traces -> inspect dashboard -> expor
 ```
 
 The project is now in **MVP-1**, expanding provider and framework coverage
-(Gemini, Qwen, self-hosted vLLM, and a dependency-free LangChain/LangGraph
-adapter shipped; the Vercel AI SDK adapter is next).
+(Gemini, Qwen, self-hosted vLLM, plus dependency-free LangChain/LangGraph and
+Vercel AI SDK adapters shipped; dashboard filtering and model comparison next).
 Development runs through a quality-gated workflow — every change passes
 lint → typecheck → build → test → smoke and lands on `main` via a reviewed,
 squash-merged PR. See [WORKFLOW.md](WORKFLOW.md) and [ROADMAP.md](ROADMAP.md).
