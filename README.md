@@ -3,7 +3,7 @@
 [![CI](https://github.com/guangyang1206/adaptive-model-router/actions/workflows/ci.yml/badge.svg)](https://github.com/guangyang1206/adaptive-model-router/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js >=20](https://img.shields.io/badge/Node.js-%3E%3D20-339933.svg)](package.json)
-[![MVP-0](https://img.shields.io/badge/status-MVP--0-2563EB.svg)](ROADMAP.md)
+[![Status: MVP-1](https://img.shields.io/badge/status-MVP--1%20in%20progress-2563EB.svg)](ROADMAP.md)
 
 > An adaptive model router for agent apps — automatically balancing quality, stability, latency, and token cost.
 
@@ -176,12 +176,12 @@ The first milestone is intentionally small:
 
 | Stage | Focus | Status |
 |---|---|---|
-| MVP-0 | SDK routing, providers, durable storage, local dashboard, CLI | In progress |
-| MVP-1 | Framework adapters, more providers, policy dry-run UI | Planned |
-| MVP-2 | Eval harness, route learning, cache, context compression | Planned |
-| MVP-3 | Team / enterprise / SaaS control plane | Future |
+| MVP-0 | SDK routing, providers, durable storage, local dashboard, CLI | ✅ Complete |
+| MVP-1 | Framework adapters, more providers (Gemini ✅ / Qwen ✅ / vLLM 🔵), dashboard filtering | 🔵 In progress |
+| MVP-2 | Eval harness, route learning, cache, context compression | ⬜ Planned |
+| MVP-3 | Team / enterprise / SaaS control plane | ⬜ Future |
 
-See [ROADMAP.md](ROADMAP.md) for details.
+See [ROADMAP.md](ROADMAP.md) for the detailed, status-tracked breakdown of every item.
 
 ## Contributing
 
@@ -210,11 +210,17 @@ Useful starter areas:
 
 ## Status
 
-This repository is an early MVP. The current priority is proving a small but complete developer loop:
+MVP-0 is **functionally complete** — the core developer loop is proven end to end:
 
 ```text
 init config -> route agent request -> store traces -> inspect dashboard -> export diagnostics
 ```
+
+The project is now in **MVP-1**, expanding provider and framework coverage
+(Gemini and Qwen shipped; vLLM, LangChain, and Vercel AI SDK adapters next).
+Development runs through a quality-gated workflow — every change passes
+lint → typecheck → build → test → smoke and lands on `main` via a reviewed,
+squash-merged PR. See [WORKFLOW.md](WORKFLOW.md) and [ROADMAP.md](ROADMAP.md).
 
 ## License
 

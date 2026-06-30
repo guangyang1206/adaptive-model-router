@@ -1,44 +1,89 @@
 # Roadmap
 
-## MVP-0 — Core Proof
+> Status legend: ✅ done · 🔵 in progress · ⬜ planned
+> Last updated: 2026-06-30 · Current focus: **MVP-1 — provider & framework expansion**
 
-Goal: prove that an embedded TypeScript SDK can route agent requests, record decisions, and explain them in a local dashboard.
+This roadmap reflects *actual* progress, not just intent. For the day-to-day
+development workflow and quality gates behind each shipped item, see
+[WORKFLOW.md](WORKFLOW.md).
 
-- TypeScript SDK
-- Quality-gated routing
-- Provider set: OpenAI, Anthropic, DeepSeek, Ollama
-- Fallback / retry / timeout for non-streaming calls
-- SQLite store with JSONL fallback
-- Local read-only dashboard with Requests and Models pages
-- Bilingual README, Quickstart, API Reference
+---
 
-## MVP-1 — Framework and Provider Expansion
+## MVP-0 — Core Proof ✅
 
-- LangChain / LangGraph adapter
-- Vercel AI SDK adapter
-- Local Proxy / HTTP Bridge
-- Gemini adapter
-- Qwen or additional domestic/open-source provider
-- vLLM support if Ollama ships first
-- Policy dry-run UI
-- Dashboard filtering and model comparison
+Goal: prove that an embedded TypeScript SDK can route agent requests, record
+decisions, and explain them in a local dashboard. **Functionally complete.**
 
-## MVP-2 — Evaluation and Optimization
+- ✅ TypeScript SDK (SDK-first, not proxy-first)
+- ✅ Quality-gated routing (capability → tier → health/success → latency → cost)
+- ✅ Provider set: OpenAI, Anthropic, DeepSeek, Ollama
+- ✅ Fallback / retry / timeout for non-streaming calls (no mid-stream fallback)
+- ✅ SQLite store with JSONL fallback
+- ✅ Local read-only dashboard (Requests + Models pages)
+- ✅ Bilingual README, Quickstart, API Reference
+- ✅ CLI: `init` / `doctor` / `inspect` / `export`
 
-- Eval harness
-- User-defined eval sets
-- LLM judge / human feedback interface
-- Route outcome learning
-- Semantic cache
-- Prompt/context compression
-- Helicone / Langfuse exporter
+### Quality hardening (post-MVP-0, shipped)
 
-## MVP-3 — Team / Enterprise / SaaS
+- ✅ eslint flat config + CI lint step
+- ✅ `tsc --noEmit` typecheck gate
+- ✅ `router.dashboard()` honest handle (no phantom server)
+- ✅ Real CLI config secret redaction
+- ✅ Token/cost estimation measures content length (not stringified length)
+- ✅ **Tool-calling capability aligned with implementation** — Gemini maps tools
+  to `functionDeclarations`; Anthropic no longer falsely advertises tool-calling
+  (honest degradation until its tool schema is mapped)
 
-- Hosted dashboard
-- Multi-project and multi-environment support
-- RBAC
-- Audit log
-- Team budget
-- Organization-level provider keys
-- Enterprise deployment templates
+---
+
+## MVP-1 — Framework and Provider Expansion 🔵
+
+Goal: make the router usable from the ecosystems contributors already live in,
+and broaden provider coverage. **In progress.**
+
+- ✅ Gemini adapter (native `generateContent`, header auth, tool mapping)
+- ✅ Qwen adapter (DashScope OpenAI-compatible mode)
+- 🔵 vLLM support (OpenAI-compatible; reuses the compatible-provider base)
+- ⬜ LangChain / LangGraph adapter
+- ⬜ Vercel AI SDK adapter
+- ⬜ Dashboard filtering and model comparison
+- ⬜ Policy dry-run UI
+- ⬜ Local Proxy / HTTP Bridge
+
+---
+
+## MVP-2 — Evaluation and Optimization ⬜
+
+Goal: move from "routes correctly" to "routes *well*", with feedback loops.
+
+- ⬜ Eval harness
+- ⬜ User-defined eval sets
+- ⬜ LLM judge / human feedback interface
+- ⬜ Route outcome learning
+- ⬜ Semantic cache
+- ⬜ Prompt / context compression
+- ⬜ Helicone / Langfuse exporter
+
+---
+
+## MVP-3 — Team / Enterprise / SaaS ⬜
+
+Goal: multi-user, multi-project control plane for teams.
+
+- ⬜ Hosted dashboard
+- ⬜ Multi-project and multi-environment support
+- ⬜ RBAC
+- ⬜ Audit log
+- ⬜ Team budget
+- ⬜ Organization-level provider keys
+- ⬜ Enterprise deployment templates
+
+---
+
+## How priorities are decided
+
+The scope is **locked per milestone** — anything outside the current milestone's
+list requires a spec change first (see WORKFLOW.md §5). The automated 6-hour dev
+loop only picks the single highest-value *in-scope* item each cycle, behind a
+5-stage quality gate (lint → typecheck → build → test → smoke), and opens a PR
+for human review. It never expands scope on its own and never merges to `main`.
