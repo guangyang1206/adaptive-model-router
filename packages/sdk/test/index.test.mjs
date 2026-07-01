@@ -102,3 +102,51 @@ test("usage estimate scales with total message content length", async () => {
   const longInput = long.routerTrace.usage?.inputTokens ?? 0
   assert.ok(longInput > shortInput * 10, `expected long input (${longInput}) to dwarf short input (${shortInput})`)
 })
+
+test("evaluate collects ALL skip reasons, not just the first", async () => {
+  // A model that is both disabled AND missing the required tool-calling capability.
+  const disabledNoTools = { ...cheapModel, id: "local/disabled", enabled: false, capabilities: ["reasoning"] }
+  const router = createRouter({
+    providers: [createStaticProvider("local", [disabledNoTools]), createStaticProvider("cloud", [strongModel])],
+  })
+
+  const result = await router.evaluate({
+    messages: [{ role: "user", content: "Use a tool." }],
+    tools: [{}],
+    route: { quality: "balanced" },
+  })
+
+  const candidate = result.candidates.find((entry) => entry.modelId === "local/disabled")
+  assert.equal(candidate?.skipped, true)
+  // Backward-compatible single reason still points at the highest-priority one.
+  assert.equal(candidate?.skippedReason, "model disabled")
+  // Full list now surfaces both reasons for explainability.
+  assert.ok(Array.isArray(candidate?.skippedReasons))
+  assert.ok(candidate?.skippedReasons?.includes("model disabled"))
+  assert.ok(candidate?.skippedReasons?.some((reason) => /tool-calling/.test(reason)))
+  assert.equal(candidate?.skippedReasons?.length, 2)
+})
+
+test("stream mode records a trace note that fallback was disabled", async () => {
+  const router = createRouter({
+    providers: [createStaticProvider("local", [cheapModel]), createStaticProvider("cloud", [strongModel])],
+    policy: { maxFallbacks: 3 },
+  })
+
+  const result = await router.chat({
+    messages: [{ role: "user", content: "Stream this." }],
+    stream: true,
+  })
+
+  assert.ok(result.routerTrace.notes?.includes("fallback disabled: stream mode"))
+})
+
+test("non-stream mode leaves trace notes unset", async () => {
+  const router = createRouter({
+    providers: [createStaticProvider("local", [cheapModel])],
+    policy: { maxFallbacks: 3 },
+  })
+
+  const result = await router.chat({ messages: [{ role: "user", content: "No stream." }] })
+  assert.equal(result.routerTrace.notes, undefined)
+})

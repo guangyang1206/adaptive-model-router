@@ -61,11 +61,22 @@ jobs:
       - name: Build CLI
         run: npx tsc -p packages/cli/tsconfig.json
 
+      # `node --test` with no path argument auto-discovers test/*.test.mjs from
+      # the working directory. This is the one form that works on both Node 20
+      # and Node 22 (the directory-path form `node --test test/` is rejected as a
+      # module on Node 22). Running per-package means new test files are picked up
+      # automatically — no hand-maintained file list to forget to update.
       - name: Run SDK tests
-        run: node --test packages/sdk/test/index.test.mjs packages/sdk/test/storage.test.mjs packages/sdk/test/providers.test.mjs packages/sdk/test/adapters.test.mjs
+        working-directory: packages/sdk
+        run: node --test
 
       - name: Run dashboard tests
-        run: node --test packages/dashboard/test/data-access.test.mjs
+        working-directory: packages/dashboard
+        run: node --test
+
+      - name: Run CLI tests
+        working-directory: packages/cli
+        run: node --test
 
       - name: Run CLI smoke test
         shell: bash

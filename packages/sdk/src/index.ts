@@ -65,8 +65,8 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
       const missing = [...required].filter((capability) => !model.capabilities.includes(capability))
       const providerConfigured = providers.some((provider) => provider.id === model.provider)
       const budgetExceeded = budget !== undefined && estimateCost(model, request).costUsd > budget
-      const skippedReason = getSkippedReason(model, providerConfigured, missing, budgetExceeded)
-      const skipped = skippedReason !== undefined
+      const skippedReasons = getSkippedReasons(model, providerConfigured, missing, budgetExceeded)
+      const skipped = skippedReasons.length > 0
 
       return {
         modelId: model.id,
@@ -74,7 +74,8 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
         score: skipped ? 0 : scoreModel(model, request, policy),
         reasons: buildReasons(model, request, policy),
         skipped,
-        skippedReason,
+        skippedReason: skippedReasons[0],
+        skippedReasons: skipped ? skippedReasons : undefined,
       }
     })
 
@@ -97,6 +98,10 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
 
     const allModels = await models()
     const maxFallbacks = request.stream ? 0 : policy.maxFallbacks
+    // Streaming disables fallback on purpose: retrying mid-stream would tear a
+    // partially-emitted response. Record it so explainability stays honest —
+    // otherwise a caller who set maxFallbacks:3 + stream:true silently gets 0.
+    const notes = request.stream && policy.maxFallbacks > 0 ? ["fallback disabled: stream mode"] : undefined
     const attempts: RouteAttempt[] = []
     const started = Date.now()
     let lastError: AdaptiveRouterError | undefined
@@ -121,6 +126,7 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
         trace.usage = usage
         trace.estimated = usage.estimated
         trace.estimatedCostUsd = usage.costUsd
+        trace.notes = notes
         await safeWriteTrace(store, trace)
         return { response, routerTrace: trace }
       } catch (error) {
@@ -142,6 +148,7 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
 
     const trace = createTrace(undefined, decision.candidates, lastError?.message ?? "All route attempts failed.", "failed", Date.now() - started)
     trace.attempts = attempts
+    trace.notes = notes
     await safeWriteTrace(store, trace)
     return { response: { content: "", raw: { error: lastError } }, routerTrace: trace }
   }
@@ -248,13 +255,14 @@ function inferRequiredCapabilities(request: RouteRequest): Set<ModelCapability> 
   return required
 }
 
-function getSkippedReason(model: ModelProfile, providerConfigured: boolean, missing: string[], budgetExceeded: boolean): string | undefined {
-  if (!model.enabled) return "model disabled"
-  if (!providerConfigured) return "provider not configured"
-  if (missing.length > 0) return `missing capability: ${missing.join(", ")}`
-  if (model.health?.status === "down") return "provider health down"
-  if (budgetExceeded) return "cost limit exceeded"
-  return undefined
+function getSkippedReasons(model: ModelProfile, providerConfigured: boolean, missing: string[], budgetExceeded: boolean): string[] {
+  const reasons: string[] = []
+  if (!model.enabled) reasons.push("model disabled")
+  if (!providerConfigured) reasons.push("provider not configured")
+  if (missing.length > 0) reasons.push(`missing capability: ${missing.join(", ")}`)
+  if (model.health?.status === "down") reasons.push("provider health down")
+  if (budgetExceeded) reasons.push("cost limit exceeded")
+  return reasons
 }
 
 function scoreModel(model: ModelProfile, request: RouteRequest, policy: Required<RoutePolicy>): number {
