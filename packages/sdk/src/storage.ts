@@ -14,6 +14,9 @@ export const sqliteSchema = [
     latency_ms INTEGER,
     estimated INTEGER NOT NULL,
     estimated_cost_usd REAL,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    total_tokens INTEGER,
     created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS routing_decisions (
@@ -133,9 +136,9 @@ function createSQLiteBackedTraceStore(database: SQLiteDatabase): TraceStoreReade
     writeTrace(trace) {
       const createdAt = new Date().toISOString()
       database.prepare(
-        `INSERT OR REPLACE INTO requests (trace_id, decision_id, status, chosen_model, reason, latency_ms, estimated, estimated_cost_usd, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(trace.traceId, trace.decisionId, trace.status, trace.chosenModel ?? null, trace.reason, trace.latencyMs ?? null, trace.estimated ? 1 : 0, trace.estimatedCostUsd ?? null, createdAt)
+        `INSERT OR REPLACE INTO requests (trace_id, decision_id, status, chosen_model, reason, latency_ms, estimated, estimated_cost_usd, input_tokens, output_tokens, total_tokens, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(trace.traceId, trace.decisionId, trace.status, trace.chosenModel ?? null, trace.reason, trace.latencyMs ?? null, trace.estimated ? 1 : 0, trace.estimatedCostUsd ?? null, trace.usage?.inputTokens ?? null, trace.usage?.outputTokens ?? null, trace.usage?.totalTokens ?? null, createdAt)
 
       database.prepare(
         `INSERT OR REPLACE INTO routing_decisions (decision_id, trace_id, candidates_json, reason)
@@ -191,10 +194,29 @@ function rowsToTraces(rows: unknown[], database: SQLiteDatabase): RouterTrace[] 
       }),
       estimated: Boolean(request.estimated),
       estimatedCostUsd: request.estimated_cost_usd === null || request.estimated_cost_usd === undefined ? undefined : Number(request.estimated_cost_usd),
+      usage: rowToUsage(request),
       latencyMs: request.latency_ms === null || request.latency_ms === undefined ? undefined : Number(request.latency_ms),
       status: request.status as RouterTrace["status"],
     }
   })
+}
+
+// Rebuilds the Usage object from the requests row. Returns undefined when the
+// row carries no token or cost data (e.g. legacy rows written before the token
+// columns existed), so SQLite matches JSONL's "usage absent" semantics rather
+// than fabricating zeros. costUsd is recovered from estimated_cost_usd, which
+// mirrors trace.usage.costUsd at write time.
+function rowToUsage(request: Record<string, unknown>): RouterTrace["usage"] {
+  const num = (value: unknown): number | undefined =>
+    value === null || value === undefined ? undefined : Number(value)
+  const inputTokens = num(request.input_tokens)
+  const outputTokens = num(request.output_tokens)
+  const totalTokens = num(request.total_tokens)
+  const costUsd = num(request.estimated_cost_usd)
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined && costUsd === undefined) {
+    return undefined
+  }
+  return { inputTokens, outputTokens, totalTokens, costUsd, estimated: Boolean(request.estimated) }
 }
 
 async function readJsonlTraces(path: string): Promise<RouterTrace[]> {

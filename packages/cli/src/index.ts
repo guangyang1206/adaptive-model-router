@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import process from "node:process"
+import { redactValue } from "./redact.js"
 
 type Config = {
   schemaVersion: "1.0"
@@ -56,9 +57,6 @@ const defaultConfig: Config = {
     port: 4318,
   },
 }
-
-const SECRET_KEY_PATTERN = /(api[-_]?key|secret|token|password|passwd|credential|authorization|auth[-_]?token|access[-_]?key|private[-_]?key|bearer)/i
-const SECRET_VALUE_PATTERN = /^(sk-|xoxb-|ghp_|gho_|github_pat_|AIza|AKIA|ya29\.)/
 
 const command = process.argv[2] ?? "help"
 const args = process.argv.slice(3)
@@ -208,27 +206,10 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8" })
 }
 
-function redactValue(value: unknown): unknown {
-  if (typeof value === "string") {
-    return SECRET_VALUE_PATTERN.test(value) ? "[REDACTED]" : value
-  }
-  if (Array.isArray(value)) {
-    return value.map(redactValue)
-  }
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {}
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = SECRET_KEY_PATTERN.test(key) ? "[REDACTED]" : redactValue(val)
-    }
-    return out
-  }
-  return value
-}
-
 // Removes any accidentally-embedded secrets before a diagnostic export leaves
 // the machine. The config schema only stores env-var *names* (e.g. "OPENAI_API_KEY"),
 // not values, but configs can be hand-edited; this guards against leaking a real
-// key that someone inlined by mistake.
+// key that someone inlined by mistake. See redact.ts for the matching rules.
 function redactConfig(config: Config): Config {
   return redactValue(config) as Config
 }

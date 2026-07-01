@@ -85,7 +85,13 @@ export type CandidateModel = {
   score: number
   reasons: string[]
   skipped?: boolean
+  // First (highest-priority) skip reason, kept for backward compatibility and
+  // compact display. Prefer `skippedReasons` when you need the full picture.
   skippedReason?: string
+  // All reasons a candidate was skipped, in priority order. A model can be both
+  // disabled AND missing a capability; collapsing that to one reason hurts
+  // explainability (and route-result learning). Empty/undefined when not skipped.
+  skippedReasons?: string[]
 }
 
 export type RouteAttempt = {
@@ -118,6 +124,10 @@ export type RouterTrace = {
   estimated: boolean
   latencyMs?: number
   status: "success" | "failed" | "fallback_success"
+  // Free-form routing decisions worth surfacing for explainability that aren't
+  // errors or attempts, e.g. "fallback disabled: stream mode". Optional so
+  // existing traces/consumers are unaffected.
+  notes?: string[]
 }
 
 export type RouteResult<TResponse = ProviderResponse> = {

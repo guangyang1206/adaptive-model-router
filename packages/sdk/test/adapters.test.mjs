@@ -167,6 +167,43 @@ test("doGenerate returns text, usage, finishReason, and carries the trace", asyn
   assert.equal(result.rawResponse.routerTrace.status, "success")
 })
 
+// Failing router: the only provider always throws a non-retryable error, so the
+// route ends "failed" with no usage recorded.
+function makeFailingRouter() {
+  const models = [
+    {
+      id: "local/demo",
+      provider: "demo",
+      model: "demo",
+      type: "self-hosted",
+      kind: "openai-compatible",
+      tier: "balanced",
+      contextWindow: 8192,
+      capabilities: ["reasoning"],
+      enabled: true,
+      cost: { inputPer1M: 0, outputPer1M: 0, currency: "USD", estimated: true },
+      health: { status: "ok", successRate: 1 },
+    },
+  ]
+  return createRouter({
+    providers: [createStaticProvider("demo", models, { failTimes: 99, errorCode: "AR_INVALID_REQUEST" })],
+    models,
+  })
+}
+
+test("doGenerate reports NaN usage (not 0) on a failed route to avoid faking free spend", async () => {
+  const model = createVercelModel(makeFailingRouter())
+  const result = await model.doGenerate({
+    prompt: [{ role: "user", content: [{ type: "text", text: "will fail" }] }],
+  })
+
+  assert.equal(result.finishReason, "error")
+  assert.equal(result.rawResponse.routerTrace.status, "failed")
+  // The whole point: absent usage surfaces as NaN ("unknown"), never 0 ("free").
+  assert.ok(Number.isNaN(result.usage.promptTokens))
+  assert.ok(Number.isNaN(result.usage.completionTokens))
+})
+
 test("doStream emits a text-delta then a finish event with the trace", async () => {
   const model = createVercelModel(makeRouter())
   const { stream } = await model.doStream({

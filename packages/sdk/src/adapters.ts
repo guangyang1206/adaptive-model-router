@@ -283,6 +283,23 @@ export function createVercelModel(
 
   const rawCall = { rawPrompt: null, rawSettings: {} as Record<string, unknown> }
 
+  // Map the router's usage onto Vercel's { promptTokens, completionTokens }.
+  // Critical distinction: when the router produced NO usage at all (e.g. a
+  // failed route with no successful attempt), we report NaN — NOT 0. Vercel's
+  // cost aggregation sums these numbers; reporting 0 would make a failed call
+  // look genuinely free and silently understate spend. NaN propagates as
+  // "unknown", which is the honest signal. When usage exists (including the
+  // router's own estimate fallback), we pass the real numbers through.
+  function toVercelUsage(routerTrace: RouterTrace): { promptTokens: number; completionTokens: number } {
+    if (!routerTrace.usage) {
+      return { promptTokens: Number.NaN, completionTokens: Number.NaN }
+    }
+    return {
+      promptTokens: routerTrace.usage.inputTokens ?? 0,
+      completionTokens: routerTrace.usage.outputTokens ?? 0,
+    }
+  }
+
   return {
     specificationVersion: "v1",
     provider: "adaptive-router",
@@ -294,10 +311,7 @@ export function createVercelModel(
       return {
         text: content,
         finishReason: failed ? "error" : "stop",
-        usage: {
-          promptTokens: routerTrace.usage?.inputTokens ?? 0,
-          completionTokens: routerTrace.usage?.outputTokens ?? 0,
-        },
+        usage: toVercelUsage(routerTrace),
         rawCall,
         rawResponse: { routerTrace },
         providerMetadata: { adaptiveRouter: { routerTrace } },
@@ -314,10 +328,7 @@ export function createVercelModel(
           controller.enqueue({
             type: "finish",
             finishReason: routerTrace.status === "failed" ? "error" : "stop",
-            usage: {
-              promptTokens: routerTrace.usage?.inputTokens ?? 0,
-              completionTokens: routerTrace.usage?.outputTokens ?? 0,
-            },
+            usage: toVercelUsage(routerTrace),
             providerMetadata: { adaptiveRouter: { routerTrace } },
           })
           controller.close()
