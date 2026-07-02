@@ -9,10 +9,112 @@ export type DashboardOptions = {
 }
 
 export type DashboardRoute = {
-  path: "/requests" | "/models"
+  path: "/requests" | "/models" | "/evals" | "/cache" | "/learning"
   title: string
   description: string
 }
+
+/** The five renderable pages. Drives `renderDashboardHtml`, `setPage`, and `pageMap`. */
+export type Page = "requests" | "models" | "evals" | "cache" | "learning"
+
+// ---------------------------------------------------------------------------
+// MVP-2 read-only API response contracts (detailed-design §9).
+// `data` field names mirror the SDK types (EvalRunResult / EvalRegressionReport
+// / SemanticCacheEntry / RouteWeights / EvalCaseResult) verbatim so the client
+// consumes them directly. The dashboard package has no SDK dependency, so these
+// are declared locally and kept byte-aligned with §9 by hand.
+// ---------------------------------------------------------------------------
+
+/** One canonical metric key → value bag. Missing key (M=0) renders as "—". */
+export type EvalMetrics = Record<string, number>
+
+/** §9: per-metric baseline→current delta with regression flag. */
+export type EvalRegressionReport = {
+  deltas: Record<string, { baseline: number; current: number; delta: number; regressed: boolean }>
+  passed: boolean
+}
+
+/** §9.1 `GET /api/evals`. */
+export type EvalsOverviewData = {
+  runs: Array<{
+    runId: string
+    datasetId: string
+    weightsVersion: string
+    createdAt: string
+    metrics: EvalMetrics
+  }>
+  /** key=canonical metric key; value=最近 N 个 run 该指标数组，时间升序（左旧右新）。 */
+  sparklines: Record<string, number[]>
+  latestRegression: EvalRegressionReport | null
+  latestPerCase: Array<{ id: string; state: "pass" | "fail" | "na" }>
+}
+
+/** §9.2 `GET /api/evals/:runId`. */
+export type EvalRunDetailData = {
+  run: { runId: string; datasetId: string; weightsVersion: string; createdAt: string; metrics: EvalMetrics }
+  cases: Array<{
+    id: string
+    expectedModel?: string
+    expectedAnyOf?: string[]
+    chosenModel?: string
+    rankOfExpected?: number
+    skipped: boolean
+    fallbackTriggered: boolean
+    assertions: Array<{ key: string; passed: boolean }>
+  }>
+  regression: EvalRegressionReport | null
+}
+
+/** §9.3 `GET /api/cache`. */
+export type CacheOverviewData = {
+  hits: number
+  misses: number
+  total: number
+  hitRate: number
+  mode: string
+  donut: { hits: number; misses: number; degradedFallbacks: number }
+  hitQualityLog: Array<{
+    query: string
+    topMatchQuery: string | null
+    similarity: number | null
+    result: "hit" | "miss"
+    source: "exact" | "semantic" | null
+    embeddingProviderId: string
+    ttlMs: number | null
+    createdAt: string
+  }>
+}
+
+/** §9.4 `GET /api/learning`. */
+export type LearningOverviewData = {
+  activeWeightsVersion: string
+  proposedChangeCount: number
+  evalDelta: EvalRegressionReport | null
+  gateStatus: "passed" | "blocked" | "none"
+  baselineWeights: number[]
+  proposedWeights: number[] | null
+  weightDiff: Array<{ dimension: string; from: number; to: number; delta: number; attribution: string[] }>
+}
+
+/**
+ * Fixed 12-dimension flatten order (detailed-design §9.4). `baselineWeights` /
+ * `proposedWeights` array indices align 1:1 with `weightDiff[i].dimension`.
+ * The frontend MUST NOT re-order these.
+ */
+export const WEIGHT_DIMENSION_ORDER = [
+  "tierMatch",
+  "tierMismatch",
+  "successRate",
+  "latency.low",
+  "latency.medium",
+  "latency.high",
+  "costCoefficient",
+  "health.ok",
+  "health.degraded",
+  "health.limited",
+  "health.unknown",
+  "health.down",
+] as const
 
 export type DashboardMetric = {
   label: "Total requests" | "Median latency" | "Estimated token cost" | "Fallback rate"
@@ -148,6 +250,21 @@ export const dashboardRoutes: DashboardRoute[] = [
     title: "Models",
     description: "Review configured models, provider health, and routing capabilities.",
   },
+  {
+    path: "/evals",
+    title: "Evaluations",
+    description: "Golden-dataset routing correctness, per-case pass/fail and regression against baseline.",
+  },
+  {
+    path: "/cache",
+    title: "Semantic Cache",
+    description: "Hit ratio, degradation mode, and hit-quality guardrails.",
+  },
+  {
+    path: "/learning",
+    title: "Learning",
+    description: "Offline weight tuning with human-in-the-loop; changes require eval baseline pass before enabling.",
+  },
 ]
 
 export const traceDrawerSections: TraceDrawerSection[] = [
@@ -192,6 +309,10 @@ export const readonlyApiRoutes = [
   "GET /api/models/:id/health",
   "GET /api/models/compare",
   "GET /api/routing-decisions/:id",
+  "GET /api/evals",
+  "GET /api/evals/:runId",
+  "GET /api/cache",
+  "GET /api/learning",
 ] as const
 
 export function createReadOnlyDataAccess(source: DashboardDataSource): DashboardDataAccess {
@@ -298,9 +419,24 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       const detail = await data.getRoutingDecision?.(decodeURIComponent(url.pathname.replace("/api/routing-decisions/", "")))
       return detail ? sendJson(response, detail) : sendJson(response, { error: "not found" }, 404)
     }
-    if (url.pathname === "/" || url.pathname === "/requests" || url.pathname === "/models") {
-      return sendHtml(response, renderDashboardHtml(url.pathname === "/models" ? "models" : "requests"))
+    // MVP-2 read-only API (detailed-design §9). :runId branch must precede the
+    // bare /api/evals branch so it isn't shadowed.
+    if (url.pathname.startsWith("/api/evals/")) {
+      const detail = readEvalRunDetail(decodeURIComponent(url.pathname.replace("/api/evals/", "")))
+      return detail ? sendJson(response, detail) : sendJson(response, { error: "not found" }, 404)
     }
+    if (url.pathname === "/api/evals") return sendJson(response, readEvalsOverview())
+    if (url.pathname === "/api/cache") return sendJson(response, readCacheOverview())
+    if (url.pathname === "/api/learning") return sendJson(response, readLearningOverview())
+    const pageMap: Record<string, Page> = {
+      "/": "requests",
+      "/requests": "requests",
+      "/models": "models",
+      "/evals": "evals",
+      "/cache": "cache",
+      "/learning": "learning",
+    }
+    if (url.pathname in pageMap) return sendHtml(response, renderDashboardHtml(pageMap[url.pathname]))
     return sendJson(response, { error: "not found" }, 404)
   } catch (error) {
     return sendJson(response, { error: error instanceof Error ? error.message : "unknown error" }, 500)
@@ -325,7 +461,12 @@ function parseRequestFilter(url: URL): RequestFilter {
   return filter
 }
 
-function renderDashboardHtml(initialPage: "requests" | "models"): string {
+function renderDashboardHtml(initialPage: Page): string {
+  // Charts + cards are rendered server-side into each new section (design-spec
+  // §4.4); the client only wires data tables + drawer interactions.
+  const evals = readEvalsOverview()
+  const cache = readCacheOverview()
+  const learning = readLearningOverview()
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -333,23 +474,27 @@ function renderDashboardHtml(initialPage: "requests" | "models"): string {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Adaptive Model Router Dashboard</title>
 <style>
-:root{color-scheme:dark;--bg:#0D1117;--surface:#161B22;--surface2:#21262D;--border:#30363D;--text:#F0F6FC;--muted:#8B949E;--blue:#3B82F6;--ok:#3FB950;--warn:#D29922;--err:#F85149}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Inter,"Noto Sans SC",system-ui,sans-serif}.app{display:grid;grid-template-columns:220px 1fr;min-height:100dvh}.side{border-right:1px solid var(--border);background:#0f141b;padding:20px}.brand{font-weight:700;margin-bottom:24px}.nav{display:grid;gap:8px}.nav button{background:transparent;border:1px solid transparent;color:var(--muted);padding:10px 12px;border-radius:8px;text-align:left;cursor:pointer}.nav button.active,.nav button:hover{background:var(--surface);border-color:var(--border);color:var(--text)}main{padding:28px;min-width:0}.header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:20px}.header h1{font-size:24px;margin:0}.header p{margin:4px 0 0;color:var(--muted)}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0}.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px}.card span{color:var(--muted);font-size:12px}.card strong{display:block;font-size:20px;margin-top:6px}.toolbar{display:flex;gap:8px;margin:16px 0}.toolbar input,.toolbar select{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px}.toolbar button{background:var(--blue);border:1px solid var(--blue);color:#fff;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:600}.toolbar button.ghost{background:transparent;border-color:var(--border);color:var(--muted);font-weight:400}.toolbar button:hover{filter:brightness(1.08)}#compare{margin:0 0 18px}.cmp-table td:first-child,.cmp-table th:first-child{color:var(--muted)}input[type=checkbox]{accent-color:var(--blue);cursor:pointer}table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:top}th{color:var(--muted);font-size:12px;font-weight:600}tr:hover td{background:var(--surface2)}.mono{font-family:"JetBrains Mono",ui-monospace,monospace}.badge{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:12px;color:var(--muted)}.ok{color:var(--ok)}.failed,.down{color:var(--err)}.fallback_success,.degraded,.limited{color:var(--warn)}.hidden{display:none}.drawer{position:fixed;inset:0 0 0 auto;width:min(720px,46vw);background:#0f141b;border-left:1px solid var(--border);padding:22px;overflow:auto;box-shadow:-20px 0 60px rgba(0,0,0,.35)}.drawer pre{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;overflow:auto}.close{float:right;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;cursor:pointer}.empty{padding:28px;color:var(--muted);background:var(--surface);border:1px dashed var(--border);border-radius:12px}@media(max-width:900px){.app{grid-template-columns:1fr}.side{border-right:0;border-bottom:1px solid var(--border)}.cards{grid-template-columns:1fr 1fr}.drawer{width:100vw}}
+:root{color-scheme:dark;--bg:#0D1117;--surface:#161B22;--surface2:#21262D;--border:#30363D;--text:#F0F6FC;--muted:#8B949E;--blue:#3B82F6;--ok:#3FB950;--warn:#D29922;--err:#F85149;--hit:#3FB950;--miss:#484F58;--regress-up:#3FB950;--regress-down:#F85149;--series-a:#3B82F6;--series-b:#8B949E;--track:#21262D}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Inter,"Noto Sans SC",system-ui,sans-serif}.app{display:grid;grid-template-columns:220px 1fr;min-height:100dvh}.side{border-right:1px solid var(--border);background:#0f141b;padding:20px}.brand{font-weight:700;margin-bottom:24px}.nav{display:grid;gap:8px}.nav button{background:transparent;border:1px solid transparent;color:var(--muted);padding:10px 12px;border-radius:8px;text-align:left;cursor:pointer}.nav button.active,.nav button:hover{background:var(--surface);border-color:var(--border);color:var(--text)}main{padding:28px;min-width:0}.header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:20px}.header h1{font-size:24px;margin:0}.header p{margin:4px 0 0;color:var(--muted)}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0}.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px}.card span{color:var(--muted);font-size:12px}.card strong{display:block;font-size:20px;margin-top:6px}.toolbar{display:flex;gap:8px;margin:16px 0}.toolbar input,.toolbar select{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px}.toolbar button{background:var(--blue);border:1px solid var(--blue);color:#fff;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:600}.toolbar button.ghost{background:transparent;border-color:var(--border);color:var(--muted);font-weight:400}.toolbar button:hover{filter:brightness(1.08)}#compare{margin:0 0 18px}.cmp-table td:first-child,.cmp-table th:first-child{color:var(--muted)}input[type=checkbox]{accent-color:var(--blue);cursor:pointer}table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:top}th{color:var(--muted);font-size:12px;font-weight:600}tr:hover td{background:var(--surface2)}.mono{font-family:"JetBrains Mono",ui-monospace,monospace}.badge{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:12px;color:var(--muted)}.ok{color:var(--ok)}.failed,.down{color:var(--err)}.fallback_success,.degraded,.limited{color:var(--warn)}.hidden{display:none}.drawer{position:fixed;inset:0 0 0 auto;width:min(720px,46vw);background:#0f141b;border-left:1px solid var(--border);padding:22px;overflow:auto;box-shadow:-20px 0 60px rgba(0,0,0,.35)}.drawer pre{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;overflow:auto}.close{float:right;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;cursor:pointer}.empty{padding:28px;color:var(--muted);background:var(--surface);border:1px dashed var(--border);border-radius:12px}.muted{color:var(--muted)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}.chart{display:block;width:100%;height:auto}.chart-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin:20px 0}.chart-wrap h3{margin:0 0 12px;font-size:14px;color:var(--muted);font-weight:600}.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}.matrix{border-collapse:collapse}.matrix td{width:22px;height:22px;padding:0;border:1px solid var(--bg);border-radius:3px;cursor:pointer}.cell-pass{background:var(--ok)}.cell-fail{background:var(--err)}.cell-na{background:var(--track)}.diff{display:inline-flex;align-items:center;gap:4px;font:12px/1 "JetBrains Mono",ui-monospace,monospace;padding:2px 8px;border-radius:999px;border:1px solid var(--border)}.diff.up{color:var(--regress-up)}.diff.down{color:var(--regress-down)}.diff.flat{color:var(--muted)}.card .chart{margin-top:8px}.toolbar button:disabled{opacity:.5;cursor:not-allowed;filter:none}@media(max-width:900px){.app{grid-template-columns:1fr}.side{border-right:0;border-bottom:1px solid var(--border)}.cards{grid-template-columns:1fr 1fr}.drawer{width:100vw}}
 </style>
 </head>
 <body>
 <div class="app">
-  <aside class="side"><div class="brand">Adaptive Router</div><nav class="nav"><button id="nav-requests">Routing Decisions</button><button id="nav-models">Models</button><button onclick="window.open('./docs/en/quickstart.md','_blank')">Docs</button></nav></aside>
+  <aside class="side"><div class="brand">Adaptive Router</div><nav class="nav"><button id="nav-requests">Routing Decisions</button><button id="nav-models">Models</button><button id="nav-evals">Evaluations</button><button id="nav-cache">Cache</button><button id="nav-learning">Learning</button><button onclick="window.open('./docs/en/quickstart.md','_blank')">Docs</button></nav></aside>
   <main>
     <section id="page-requests"><div class="header"><div><h1>Routing Decisions</h1><p>Inspect how each agent request was routed across quality, latency, and token cost.</p></div><button class="close" onclick="location.reload()">Refresh</button></div><div id="metrics" class="cards"></div><div class="toolbar"><input id="search" placeholder="Search request id/model" /><select id="status"><option value="">All status</option><option>success</option><option>fallback_success</option><option>failed</option></select></div><div id="requests"></div></section>
     <section id="page-models" class="hidden"><div class="header"><div><h1>Models</h1><p>Review configured models, provider health, and routing capabilities. Tick rows to compare them side by side.</p></div></div><div class="toolbar"><input id="model-search" placeholder="Filter by model id / provider" /><button id="compare-btn">Compare selected</button><button id="compare-clear" class="ghost">Clear</button></div><div id="compare"></div><div id="models"></div></section>
+    <section id="page-evals" class="hidden">${renderEvalsSection(evals)}</section>
+    <section id="page-cache" class="hidden">${renderCacheSection(cache)}</section>
+    <section id="page-learning" class="hidden">${renderLearningSection(learning)}</section>
   </main>
 </div>
 <div id="drawer" class="drawer hidden"></div>
 <script>
-const state={page:${JSON.stringify(initialPage)},requests:[],models:[],compare:[]};
+const state={page:${JSON.stringify(initialPage)},requests:[],models:[],compare:[],evals:null,cache:null,learning:null};
+const PAGES=["requests","models","evals","cache","learning"];
 const $=id=>document.getElementById(id);
 async function api(path){const res=await fetch(path); if(!res.ok) throw new Error(await res.text()); const payload=await res.json(); return payload.data;}
-function setPage(page){state.page=page; $('page-requests').classList.toggle('hidden',page!=='requests'); $('page-models').classList.toggle('hidden',page!=='models'); $('nav-requests').classList.toggle('active',page==='requests'); $('nav-models').classList.toggle('active',page==='models'); history.replaceState(null,'',page==='models'?'/models':'/requests');}
+function setPage(page){state.page=page; PAGES.forEach(p=>{const sec=$('page-'+p); const nav=$('nav-'+p); if(sec)sec.classList.toggle('hidden',p!==page); if(nav)nav.classList.toggle('active',p===page);}); history.replaceState(null,'','/'+page);}
 function fmtCost(v){return v==null?'n/a':'$'+Number(v).toFixed(6)}
 function badge(v){return '<span class="badge '+String(v)+'">'+String(v)+'</span>'}
 function renderMetrics(items){$('metrics').innerHTML=items.map(m=>'<div class="card"><span>'+m.label+'</span><strong>'+m.value+'</strong></div>').join('')}
@@ -359,11 +504,420 @@ function visibleModels(){const q=($('model-search').value||'').toLowerCase(); re
 function renderModels(){const rows=visibleModels(); $('models').innerHTML=rows.length?'<table><thead><tr><th></th><th>model id</th><th>provider</th><th>type</th><th>capabilities</th><th>health</th><th>latency p50</th><th>cost profile</th><th>enabled</th></tr></thead><tbody>'+rows.map(m=>'<tr><td><input type="checkbox" class="cmp" value="'+m.modelId+'"'+(state.compare.includes(m.modelId)?' checked':'')+' /></td><td class="mono">'+m.modelId+'</td><td>'+m.provider+'</td><td>'+badge(m.type)+'</td><td>'+m.capabilities.map(badge).join(' ')+'</td><td>'+badge(m.health)+'</td><td>'+(m.latencyP50Ms??'n/a')+'</td><td>'+ (m.costProfile||'n/a') +'</td><td>'+m.enabled+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No models match this filter.</div>'; document.querySelectorAll('.cmp').forEach(cb=>cb.addEventListener('change',()=>{const id=cb.value; if(cb.checked){if(!state.compare.includes(id))state.compare.push(id);}else{state.compare=state.compare.filter(x=>x!==id);}}))}
 async function runCompare(){if(state.compare.length<1){$('compare').innerHTML='<div class="empty">Tick at least one model row to compare.</div>';return;} const c=await api('/api/models/compare?ids='+encodeURIComponent(state.compare.join(','))); const head='<tr><th>field</th>'+c.models.map(m=>'<th class="mono">'+m.modelId+(m.found?'':' (not configured)')+'</th>').join('')+'</tr>'; const rowOf=(label,fn)=>'<tr><td>'+label+'</td>'+c.models.map(m=>'<td>'+fn(m)+'</td>').join('')+'</tr>'; const matrix=c.capabilityMatrix.map(r=>'<tr><td>'+r.capability+'</td>'+r.support.map(s=>'<td>'+(s?'✓':'·')+'</td>').join('')+'</tr>').join(''); $('compare').innerHTML='<table class="cmp-table"><thead>'+head+'</thead><tbody>'+rowOf('provider',m=>m.provider)+rowOf('type',m=>badge(m.type))+rowOf('health',m=>badge(m.health))+rowOf('latency p50',m=>(m.latencyP50Ms??'n/a'))+rowOf('cost profile',m=>(m.costProfile||'n/a'))+rowOf('enabled',m=>m.enabled)+'<tr><td colspan="'+(c.models.length+1)+'"><strong>Capabilities</strong></td></tr>'+matrix+'</tbody></table>';}
 async function openTrace(id){const d=await api('/api/requests/'+encodeURIComponent(id)); const el=$('drawer'); el.classList.remove('hidden'); el.innerHTML='<button class="close" id="drawer-close">Close</button><h2 class="mono">'+id+'</h2><h3>Decision summary</h3><p>'+d.decisionSummary+'</p><h3>Candidate models</h3><pre>'+JSON.stringify(d.candidateModels,null,2)+'</pre><h3>Attempts timeline</h3><pre>'+JSON.stringify(d.attempts,null,2)+'</pre><h3>Estimated usage</h3><pre>'+JSON.stringify(d.estimatedUsage||{},null,2)+'</pre>'; $('drawer-close').onclick=()=>el.classList.add('hidden')}
-async function load(){setPage(state.page); renderMetrics(await api('/api/metrics/summary')); state.requests=await api('/api/requests'); state.models=await api('/api/models'); renderRequests(); renderModels();}
-$('nav-requests').onclick=()=>setPage('requests'); $('nav-models').onclick=()=>setPage('models'); $('search').oninput=reloadRequests; $('status').onchange=reloadRequests; $('model-search').oninput=renderModels; $('compare-btn').onclick=runCompare; $('compare-clear').onclick=()=>{state.compare=[]; $('compare').innerHTML=''; renderModels();}; load().catch(e=>{document.querySelector('main').innerHTML='<div class="empty">'+e.message+'</div>'});
+function pct(v){return v==null?'—':(v*100).toFixed(1)+'%'}
+function num(v){return v==null?'—':String(v)}
+function renderEvalsTable(){const d=state.evals; if(!d)return; const rows=d.runs.slice().reverse(); $('evals-table').innerHTML='<div class="chart-wrap"><h3>Recent runs</h3>'+(rows.length?'<table><thead><tr><th>runId</th><th>datasetId</th><th>weightsVersion</th><th>routeAccuracy</th><th>costCompliance</th><th>fallbackRate</th><th>createdAt</th></tr></thead><tbody>'+rows.map(r=>'<tr tabindex="0" data-run-id="'+r.runId+'"><td class="mono">'+r.runId+'</td><td class="mono">'+r.datasetId+'</td><td>'+badge(r.weightsVersion)+'</td><td class="mono">'+pct(r.metrics.routingAccuracy)+'</td><td class="mono">'+pct(r.metrics.costCompliance)+'</td><td class="mono">'+pct(r.metrics.fallbackRate)+'</td><td class="mono">'+r.createdAt+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No eval runs yet.</div>')+'</div>'; document.querySelectorAll('[data-run-id]').forEach(row=>row.addEventListener('click',()=>openRun(row.getAttribute('data-run-id')))); document.querySelectorAll('#page-evals .matrix td[data-case-id]').forEach(c=>c.addEventListener('click',()=>openCase(c.getAttribute('data-case-id'))))}
+async function openRun(runId){const d=await api('/api/evals/'+encodeURIComponent(runId)); const el=$('drawer'); el.classList.remove('hidden'); const reg=d.regression?Object.entries(d.regression.deltas).map(([k,v])=>k+': '+v.delta.toFixed(3)+(v.regressed?' (regressed)':'')).join('\\n'):'no baseline'; el.innerHTML='<button class="close" id="drawer-close">Close</button><h2 class="mono">'+d.run.runId+'</h2><h3>Run metrics</h3><pre>'+JSON.stringify(d.run.metrics,null,2)+'</pre><h3>Regression delta</h3><pre>'+reg+'</pre><h3>Cases</h3><pre>'+JSON.stringify(d.cases,null,2)+'</pre>'; $('drawer-close').onclick=()=>el.classList.add('hidden')}
+async function openCase(caseId){const d=state.evals; const runId=d&&d.runs.length?d.runs[d.runs.length-1].runId:null; if(!runId)return; const detail=await api('/api/evals/'+encodeURIComponent(runId)); const c=detail.cases.find(x=>x.id===caseId); const el=$('drawer'); el.classList.remove('hidden'); el.innerHTML='<button class="close" id="drawer-close">Close</button><h2 class="mono">'+caseId+'</h2>'+(c?'<h3>Expected vs chosen</h3><pre>'+JSON.stringify({expectedModel:c.expectedModel,expectedAnyOf:c.expectedAnyOf,chosenModel:c.chosenModel,rankOfExpected:c.rankOfExpected,skipped:c.skipped,fallbackTriggered:c.fallbackTriggered},null,2)+'</pre><h3>Assertions</h3><pre>'+JSON.stringify(c.assertions,null,2)+'</pre>':'<div class="empty">Case not in latest run detail.</div>'); $('drawer-close').onclick=()=>el.classList.add('hidden')}
+function heat(sim){return sim==null?'':' style="color:color-mix(in srgb,var(--ok) '+(sim*100).toFixed(0)+'%,var(--err))"'}
+function renderCacheTable(){const d=state.cache; if(!d)return; const rows=d.hitQualityLog; $('cache-table').innerHTML='<div class="chart-wrap"><h3>Hit-quality log</h3>'+(rows.length?'<table><thead><tr><th>query</th><th>top match</th><th>similarity</th><th>result</th><th>provider</th><th>ttl</th><th>createdAt</th></tr></thead><tbody>'+rows.map(r=>'<tr><td>'+r.query+'</td><td class="mono">'+(r.topMatchQuery||'—')+'</td><td class="mono"'+heat(r.similarity)+'>'+(r.similarity==null?'—':r.similarity.toFixed(3))+'</td><td><span class="badge" style="color:var('+(r.result==='hit'?'--hit':'--miss')+')">'+r.result+(r.source?' · '+r.source:'')+'</span></td><td class="mono">'+r.embeddingProviderId+'</td><td class="mono">'+(r.ttlMs==null?'—':r.ttlMs+'ms')+'</td><td class="mono">'+r.createdAt+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No cache lookups logged yet.</div>')+'</div>'}
+function renderLearningTable(){const d=state.learning; if(!d)return; const rows=d.weightDiff; $('learning-table').innerHTML='<div class="chart-wrap"><h3>Before / after weights</h3><table><thead><tr><th>dimension</th><th>before</th><th>after</th><th>delta</th><th>attribution</th></tr></thead><tbody>'+rows.map(r=>'<tr tabindex="0" data-dim="'+r.dimension+'"><td class="mono">'+r.dimension+'</td><td class="mono">'+r.from+'</td><td class="mono">'+r.to+'</td><td>'+diffBadgeClient(r.delta)+'</td><td class="mono">'+(r.attribution.length?r.attribution.join(', '):'—')+'</td></tr>').join('')+'</tbody></table></div>'; document.querySelectorAll('[data-dim]').forEach(row=>row.addEventListener('click',()=>openDim(row.getAttribute('data-dim'))))}
+function diffBadgeClient(delta){const dir=delta===0?'flat':(delta>0?'up':'down'); const tri=dir==='flat'?'<span>–</span>':'<svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="'+(dir==='up'?'M4 0 L8 8 L0 8 Z':'M0 0 L8 0 L4 8 Z')+'" fill="currentColor"/></svg>'; const sign=delta>0?'+':''; return '<span class="diff flat">'+tri+sign+delta.toFixed(3)+'</span>'}
+function openDim(dim){const d=state.learning; const r=d.weightDiff.find(x=>x.dimension===dim); const el=$('drawer'); el.classList.remove('hidden'); el.innerHTML='<button class="close" id="drawer-close">Close</button><h2 class="mono">'+dim+'</h2><h3>Change</h3><pre>'+JSON.stringify({from:r.from,to:r.to,delta:r.delta},null,2)+'</pre><h3>Attribution (eval cases / traces)</h3><pre>'+JSON.stringify(r.attribution,null,2)+'</pre><h3>Rollback target</h3><p class="mono">'+d.activeWeightsVersion+'</p>'; $('drawer-close').onclick=()=>el.classList.add('hidden')}
+async function load(){setPage(state.page); renderMetrics(await api('/api/metrics/summary')); state.requests=await api('/api/requests'); state.models=await api('/api/models'); renderRequests(); renderModels(); state.evals=await api('/api/evals'); state.cache=await api('/api/cache'); state.learning=await api('/api/learning'); renderEvalsTable(); renderCacheTable(); renderLearningTable();}
+$('nav-requests').onclick=()=>setPage('requests'); $('nav-models').onclick=()=>setPage('models'); $('nav-evals').onclick=()=>setPage('evals'); $('nav-cache').onclick=()=>setPage('cache'); $('nav-learning').onclick=()=>setPage('learning'); $('search').oninput=reloadRequests; $('status').onchange=reloadRequests; $('model-search').oninput=renderModels; $('compare-btn').onclick=runCompare; $('compare-clear').onclick=()=>{state.compare=[]; $('compare').innerHTML=''; renderModels();}; load().catch(e=>{document.querySelector('main').innerHTML='<div class="empty">'+e.message+'</div>'});
 </script>
 </body>
 </html>`
+}
+
+// ===========================================================================
+// MVP-2 atomic chart components (design-spec §2). All zero-dependency,
+// server-side string builders — coordinates computed here, never in the
+// browser. 4 SVG (sparkline/stackedBar/donut/lineChart) + 2 HTML
+// (passFailMatrix/diffBadge). No framework, no chart library.
+// ===========================================================================
+
+/** §2.1 Micro trend line. viewBox 0 0 120 32, 3px top/bottom padding. */
+export function sparkline(values: number[]): string {
+  const n = values.length
+  if (n < 2) return '<span class="mono muted">n/a</span>'
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const range = max - min || 1
+  const pts = values
+    .map((v, i) => `${(i * (120 / (n - 1))).toFixed(2)},${(29 - ((v - min) / range) * 26).toFixed(2)}`)
+    .join(" ")
+  return (
+    `<svg class="chart" viewBox="0 0 120 32" role="img" aria-label="trend">` +
+    `<line x1="0" y1="29" x2="120" y2="29" stroke="var(--track)" stroke-width="1"/>` +
+    `<polyline fill="none" stroke="var(--series-a)" stroke-width="1.5" points="${pts}"/></svg>`
+  )
+}
+
+/** §2.2 Horizontal stacked bar / single-value progress. viewBox 0 0 240 14. */
+export function stackedBar(segs: { value: number; token: string }[]): string {
+  const total = segs.reduce((s, x) => s + x.value, 0) || 1
+  let cx = 0
+  const rects = segs
+    .map((s) => {
+      const w = (s.value / total) * 240
+      const r = `<rect x="${cx.toFixed(2)}" y="0" width="${w.toFixed(2)}" height="14" fill="var(${s.token})"/>`
+      cx += w
+      return r
+    })
+    .join("")
+  // Rounded corners via an overflow-hidden wrapper (SVG clip-path inset support is uneven).
+  return (
+    `<span style="display:block;border-radius:7px;overflow:hidden">` +
+    `<svg class="chart" viewBox="0 0 240 14" role="img" aria-label="ratio">` +
+    `<rect x="0" y="0" width="240" height="14" fill="var(--track)"/>${rects}</svg></span>`
+  )
+}
+
+/** §2.3 Donut (ring proportion) via stroke-dasharray. viewBox 0 0 120 120. */
+export function donut(parts: { value: number; token: string }[], centerLabel: string): string {
+  const r = 48
+  const C = 2 * Math.PI * r
+  const total = parts.reduce((s, x) => s + x.value, 0) || 1
+  let off = 0
+  const arcs = parts
+    .map((p) => {
+      const dash = (p.value / total) * C
+      const a =
+        `<circle cx="60" cy="60" r="${r}" fill="none" stroke="var(${p.token})" stroke-width="16" ` +
+        `stroke-dasharray="${dash.toFixed(2)} ${(C - dash).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}"/>`
+      off += dash
+      return a
+    })
+    .join("")
+  return (
+    `<svg class="chart" viewBox="0 0 120 120" role="img" aria-label="hit ratio" style="max-width:160px;margin:auto">` +
+    `<circle cx="60" cy="60" r="${r}" fill="none" stroke="var(--track)" stroke-width="16"/>` +
+    `<g transform="rotate(-90 60 60)">${arcs}</g>` +
+    `<text x="60" y="58" text-anchor="middle" fill="var(--text)" font-size="20" font-family="JetBrains Mono,monospace">${centerLabel}</text>` +
+    `<text x="60" y="74" text-anchor="middle" fill="var(--muted)" font-size="9">hit rate</text></svg>`
+  )
+}
+
+/** §2.4 Multi-series line chart. viewBox 0 0 480 200; shared X index; global min/max. */
+export function lineChart(series: { token: string; values: number[] }[]): string {
+  const padL = 40
+  const padT = 12
+  const W = 428
+  const H = 164
+  const all = series.flatMap((s) => s.values)
+  if (all.length === 0) return '<div class="empty">No data.</div>'
+  const min = Math.min(...all)
+  const max = Math.max(...all)
+  const range = max - min || 1
+  const n = Math.max(...series.map((s) => s.values.length))
+  const grid = [0, 1, 2, 3]
+    .map((k) => {
+      const y = padT + (H * k) / 3
+      return `<line x1="${padL}" y1="${y}" x2="480" y2="${y}" stroke="var(--track)" stroke-width="1"/>`
+    })
+    .join("")
+  const lines = series
+    .map((s) => {
+      const pts = s.values
+        .map((v, i) => `${(padL + i * (W / (n - 1 || 1))).toFixed(2)},${(padT + H - ((v - min) / range) * H).toFixed(2)}`)
+        .join(" ")
+      return `<polyline fill="none" stroke="var(${s.token})" stroke-width="2" points="${pts}"/>`
+    })
+    .join("")
+  const yl = [max, (max + min) / 2, min]
+    .map(
+      (v, k) =>
+        `<text x="34" y="${padT + (H * k) / 2 + 3}" text-anchor="end" fill="var(--muted)" font-size="9" font-family="JetBrains Mono,monospace">${v.toFixed(2)}</text>`,
+    )
+    .join("")
+  return `<svg class="chart" viewBox="0 0 480 200" role="img" aria-label="trend">${grid}${yl}${lines}</svg>`
+}
+
+/** §2.5 Pass/Fail matrix — pure HTML table, 22×22 cells, wraps every 30 cells. */
+export function passFailMatrix(cases: { id: string; state: "pass" | "fail" | "na" }[]): string {
+  if (cases.length === 0) return '<div class="empty">No evaluated cases yet.</div>'
+  const cls: Record<string, string> = { pass: "cell-pass", fail: "cell-fail", na: "cell-na" }
+  const rows: string[] = []
+  for (let i = 0; i < cases.length; i += 30) {
+    const cells = cases
+      .slice(i, i + 30)
+      .map(
+        (c) =>
+          `<td class="${cls[c.state]}" data-case-id="${escapeAttr(c.id)}" title="${escapeAttr(c.id)}: ${c.state}"></td>`,
+      )
+      .join("")
+    rows.push(`<tr>${cells}</tr>`)
+  }
+  return `<table class="matrix"><tbody>${rows.join("")}</tbody></table>`
+}
+
+/**
+ * §2.6 Diff badge. `valence`:
+ *  - "higher" (default): delta>0 = good = up green (routingAccuracy/top1ExpectMatch…)
+ *  - "lower": delta<0 = good = up green (cost/latency/fallbackRate…)
+ *  - "neutral": direction triangle only, always flat/muted (all /learning weights)
+ */
+export function diffBadge(delta: number, valence: "higher" | "lower" | "neutral" = "higher"): string {
+  const dir =
+    delta === 0
+      ? "flat"
+      : valence === "neutral"
+        ? delta > 0
+          ? "up"
+          : "down"
+        : (valence === "lower" ? delta < 0 : delta > 0)
+          ? "up"
+          : "down"
+  const colorCls = valence === "neutral" ? "flat" : dir
+  const tri =
+    dir === "flat"
+      ? `<span>–</span>`
+      : `<svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="${dir === "up" ? "M4 0 L8 8 L0 8 Z" : "M0 0 L8 0 L4 8 Z"}" fill="currentColor"/></svg>`
+  const sign = delta > 0 ? "+" : ""
+  return `<span class="diff ${colorCls}">${tri}${sign}${delta.toFixed(3)}</span>`
+}
+
+/** Minimal attribute escaper for server-rendered ids/titles. */
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+}
+
+// ===========================================================================
+// MVP-2 read-only data readers (detailed-design §9).
+//
+// TODO: swap to real SDK readers when backend lands. Backend will export from
+// @adaptive-router/sdk: listEvalRuns / getLatestRegression / getEvalRun /
+// getCacheStats / getLearningState. The dashboard package currently has no SDK
+// dependency, so these return §9-contract-shaped placeholder data that lets the
+// three pages render and typecheck. During integration, replace each body with
+// the corresponding SDK call and keep the return shapes identical.
+// ===========================================================================
+
+// TODO: swap to real reader when backend lands → listEvalRuns/getLatestRegression/latestPerCase.
+function readEvalsOverview(): EvalsOverviewData {
+  const runs: EvalsOverviewData["runs"] = [
+    { runId: "run_1720000001_a1", datasetId: "golden-routing@3f9c2a1b", weightsVersion: "builtin", createdAt: "2026-07-01T09:12:00.000Z", metrics: { routingAccuracy: 0.86, top1ExpectMatch: 0.71, costCompliance: 0.94, fallbackRate: 0.08 } },
+    { runId: "run_1720086402_b2", datasetId: "golden-routing@3f9c2a1b", weightsVersion: "builtin", createdAt: "2026-07-02T09:15:00.000Z", metrics: { routingAccuracy: 0.88, top1ExpectMatch: 0.74, costCompliance: 0.93, fallbackRate: 0.07 } },
+    { runId: "run_1720172803_c3", datasetId: "golden-routing@3f9c2a1b", weightsVersion: "learned_2026-07-03_ab12", createdAt: "2026-07-03T09:11:00.000Z", metrics: { routingAccuracy: 0.91, top1ExpectMatch: 0.78, costCompliance: 0.95, fallbackRate: 0.05 } },
+  ]
+  const state = (i: number): "pass" | "fail" | "na" => (i % 11 === 4 ? "na" : i % 7 === 3 ? "fail" : "pass")
+  return {
+    runs,
+    sparklines: {
+      routingAccuracy: [0.83, 0.85, 0.86, 0.88, 0.91],
+      top1ExpectMatch: [0.68, 0.7, 0.71, 0.74, 0.78],
+      costCompliance: [0.9, 0.92, 0.94, 0.93, 0.95],
+      fallbackRate: [0.12, 0.1, 0.08, 0.07, 0.05],
+    },
+    latestRegression: {
+      deltas: {
+        routingAccuracy: { baseline: 0.88, current: 0.91, delta: 0.03, regressed: false },
+        top1ExpectMatch: { baseline: 0.74, current: 0.78, delta: 0.04, regressed: false },
+        costCompliance: { baseline: 0.93, current: 0.95, delta: 0.02, regressed: false },
+        fallbackRate: { baseline: 0.07, current: 0.05, delta: -0.02, regressed: false },
+      },
+      passed: true,
+    },
+    latestPerCase: Array.from({ length: 48 }, (_, i) => ({ id: `case_${String(i + 1).padStart(3, "0")}`, state: state(i) })),
+  }
+}
+
+// TODO: swap to real reader when backend lands → getEvalRun(store, runId).
+function readEvalRunDetail(runId: string): EvalRunDetailData | undefined {
+  const overview = readEvalsOverview()
+  const run = overview.runs.find((r) => r.runId === runId)
+  if (!run) return undefined
+  return {
+    run,
+    cases: overview.latestPerCase.slice(0, 12).map((c) => ({
+      id: c.id,
+      expectedModel: "openai/gpt-4o",
+      expectedAnyOf: ["openai/gpt-4o", "anthropic/claude-3.5-sonnet"],
+      chosenModel: c.state === "fail" ? "openai/gpt-4o-mini" : "openai/gpt-4o",
+      rankOfExpected: c.state === "fail" ? 2 : 0,
+      skipped: false,
+      fallbackTriggered: c.state === "fail",
+      assertions: [
+        { key: "anyOf", passed: c.state !== "fail" },
+        { key: "maxCostUsd", passed: c.state !== "na" },
+        { key: "mustHaveCapabilities", passed: true },
+      ],
+    })),
+    regression: overview.latestRegression,
+  }
+}
+
+// TODO: swap to real reader when backend lands → getCacheStats(store).
+function readCacheOverview(): CacheOverviewData {
+  const hits = 742
+  const misses = 258
+  const total = hits + misses
+  const log: CacheOverviewData["hitQualityLog"] = [
+    { query: "summarize the quarterly revenue report", topMatchQuery: "summarise the quarterly revenue report", similarity: 0.972, result: "hit", source: "semantic", embeddingProviderId: "openai:text-embedding-3-small", ttlMs: 3600000, createdAt: "2026-07-03T10:41:00.000Z" },
+    { query: "list active kubernetes pods", topMatchQuery: "list active kubernetes pods", similarity: null, result: "hit", source: "exact", embeddingProviderId: "openai:text-embedding-3-small", ttlMs: 300000, createdAt: "2026-07-03T10:38:00.000Z" },
+    { query: "explain the CAP theorem in one sentence", topMatchQuery: "what is the CAP theorem", similarity: 0.913, result: "miss", source: null, embeddingProviderId: "openai:text-embedding-3-small", ttlMs: null, createdAt: "2026-07-03T10:35:00.000Z" },
+    { query: "draft a cold outreach email", topMatchQuery: null, similarity: null, result: "miss", source: null, embeddingProviderId: "openai:text-embedding-3-small", ttlMs: null, createdAt: "2026-07-03T10:31:00.000Z" },
+  ]
+  return {
+    hits,
+    misses,
+    total,
+    hitRate: hits / total,
+    mode: "semantic@0.95",
+    donut: { hits: 690, misses: 258, degradedFallbacks: 52 },
+    hitQualityLog: log,
+  }
+}
+
+// TODO: swap to real reader when backend lands → getLearningState(store).
+function readLearningOverview(): LearningOverviewData {
+  const baseline = [40, 10, 15, 10, 6, 3, 100, 30, 15, 12, 8, 0]
+  const proposed = [43, 9, 16, 11, 6, 3, 96, 31, 15, 12, 8, 0]
+  const attribution: Record<string, string[]> = {
+    tierMatch: ["case_003", "case_017", "trace_9f2a"],
+    successRate: ["case_021"],
+    costCoefficient: ["case_008", "case_034"],
+  }
+  return {
+    activeWeightsVersion: "builtin",
+    proposedChangeCount: baseline.filter((b, i) => b !== proposed[i]).length,
+    evalDelta: {
+      deltas: {
+        routingAccuracy: { baseline: 0.88, current: 0.91, delta: 0.03, regressed: false },
+        top1ExpectMatch: { baseline: 0.74, current: 0.78, delta: 0.04, regressed: false },
+        costCompliance: { baseline: 0.93, current: 0.95, delta: 0.02, regressed: false },
+      },
+      passed: true,
+    },
+    gateStatus: "passed",
+    baselineWeights: baseline,
+    proposedWeights: proposed,
+    weightDiff: WEIGHT_DIMENSION_ORDER.map((dimension, i) => ({
+      dimension,
+      from: baseline[i],
+      to: proposed[i],
+      delta: proposed[i] - baseline[i],
+      attribution: attribution[dimension] ?? [],
+    })),
+  }
+}
+
+// ===========================================================================
+// MVP-2 page section renderers (design-spec §3). Cards + charts are rendered
+// server-side into the section HTML; the client script only wires the data
+// tables + drawer interactions.
+// ===========================================================================
+
+const CANON_METRICS: { key: string; label: string; valence: "higher" | "lower" }[] = [
+  { key: "routingAccuracy", label: "Route accuracy", valence: "higher" },
+  { key: "top1ExpectMatch", label: "Top-1 hit", valence: "higher" },
+  { key: "costCompliance", label: "Cost compliance", valence: "higher" },
+  { key: "fallbackRate", label: "Fallback / fail rate", valence: "lower" },
+]
+
+function fmtMetric(v: number | undefined): string {
+  return v === undefined ? "—" : v.toFixed(2)
+}
+
+/** §3.1 `/evals` — Evaluation & regression gate. */
+function renderEvalsSection(d: EvalsOverviewData): string {
+  const cards = CANON_METRICS.map((m) => {
+    const v = d.runs.length ? d.runs[d.runs.length - 1].metrics[m.key] : undefined
+    const spark = d.sparklines[m.key] ?? []
+    return `<div class="card"><span>${m.label}</span><strong class="mono">${fmtMetric(v)}</strong>${sparkline(spark)}</div>`
+  }).join("")
+
+  const regression = d.latestRegression
+  const regStrip = !regression
+    ? '<div class="empty">尚无基线（no baseline yet）。</div>'
+    : CANON_METRICS.map((m) => {
+        const dd = regression.deltas[m.key]
+        if (!dd) return ""
+        return `<span title="${m.key}: ${dd.baseline.toFixed(3)} → ${dd.current.toFixed(3)}">${diffBadge(dd.delta, m.valence)}</span>`
+      }).join(" ")
+
+  const legend =
+    '<span class="legend">' +
+    '<span><i class="dot" style="background:var(--ok)"></i>pass</span>' +
+    '<span><i class="dot" style="background:var(--err)"></i>fail (regressed)</span>' +
+    '<span><i class="dot" style="background:var(--track)"></i>n/a</span></span>'
+
+  return (
+    `<div class="header"><div><h1>Evaluations</h1>` +
+    `<p>Golden-dataset routing correctness, per-case pass/fail and regression against baseline.</p></div>` +
+    `<button class="close" onclick="location.reload()">Refresh</button></div>` +
+    `<div class="cards">${cards}</div>` +
+    `<div class="chart-wrap"><h3>Regression vs baseline</h3><div class="legend">${regStrip}</div></div>` +
+    `<div class="chart-wrap"><h3>Per-case pass/fail</h3>${passFailMatrix(d.latestPerCase)}${legend}</div>` +
+    `<div id="evals-table"></div>`
+  )
+}
+
+/** §3.2 `/cache` — Semantic cache. */
+function renderCacheSection(d: CacheOverviewData): string {
+  const modeDegraded = d.mode.startsWith("degraded")
+  const cards =
+    `<div class="card"><span>Hit rate</span><strong class="mono">${(d.hitRate * 100).toFixed(1)}%</strong></div>` +
+    `<div class="card"><span>Hits</span><strong class="mono">${d.hits}</strong></div>` +
+    `<div class="card"><span>Misses</span><strong class="mono">${d.misses}</strong></div>` +
+    `<div class="card"><span>Mode</span><strong class="mono"${modeDegraded ? ' style="color:var(--warn)"' : ""}>${escapeAttr(d.mode)}</strong></div>`
+
+  const donutParts = [
+    { value: d.donut.hits, token: "--hit" },
+    { value: d.donut.misses, token: "--miss" },
+    { value: d.donut.degradedFallbacks, token: "--warn" },
+  ]
+  const barLegend =
+    '<span class="legend">' +
+    '<span><i class="dot" style="background:var(--hit)"></i>hits</span>' +
+    '<span><i class="dot" style="background:var(--miss)"></i>misses</span></span>'
+  const donutLegend =
+    '<span class="legend">' +
+    '<span><i class="dot" style="background:var(--hit)"></i>hits</span>' +
+    '<span><i class="dot" style="background:var(--miss)"></i>misses</span>' +
+    '<span><i class="dot" style="background:var(--warn)"></i>degraded fallbacks</span></span>'
+
+  return (
+    `<div class="header"><div><h1>Semantic Cache</h1>` +
+    `<p>Hit ratio, degradation mode, and hit-quality guardrails.</p></div>` +
+    `<button class="close" onclick="location.reload()">Refresh</button></div>` +
+    `<div class="cards">${cards}</div>` +
+    `<div class="chart-wrap"><h3>Hit ratio</h3>${donut(donutParts, `${(d.hitRate * 100).toFixed(0)}%`)}${donutLegend}</div>` +
+    `<div class="chart-wrap"><h3>Hit / miss composition</h3>${stackedBar([{ value: d.donut.hits, token: "--hit" }, { value: d.donut.misses, token: "--miss" }])}${barLegend}</div>` +
+    `<div id="cache-table"></div>`
+  )
+}
+
+/** §3.3 `/learning` — Routing-result learning. */
+function renderLearningSection(d: LearningOverviewData): string {
+  const evalDeltaBadge = d.evalDelta?.deltas.routingAccuracy
+    ? diffBadge(d.evalDelta.deltas.routingAccuracy.delta, "higher")
+    : '<span class="mono muted">—</span>'
+  const gateColor = d.gateStatus === "passed" ? "var(--ok)" : d.gateStatus === "blocked" ? "var(--warn)" : "var(--muted)"
+  const activeStyle = d.activeWeightsVersion === "builtin" ? ' style="color:var(--muted)"' : ""
+  const cards =
+    `<div class="card"><span>Active weightsVersion</span><strong class="mono"${activeStyle}>${escapeAttr(d.activeWeightsVersion)}</strong></div>` +
+    `<div class="card"><span>Proposed changes</span><strong class="mono">${d.proposedChangeCount}</strong></div>` +
+    `<div class="card"><span>Eval delta (route accuracy)</span><strong>${evalDeltaBadge}</strong></div>` +
+    `<div class="card"><span>Gate status</span><strong class="mono" style="color:${gateColor}">${d.gateStatus}</strong></div>`
+
+  const series = [
+    { token: "--series-b", values: d.baselineWeights },
+    { token: "--series-a", values: d.proposedWeights ?? d.baselineWeights },
+  ]
+  const lineLegend =
+    '<span class="legend">' +
+    '<span><i class="dot" style="background:var(--series-b)"></i>before (baseline)</span>' +
+    '<span><i class="dot" style="background:var(--series-a)"></i>after (proposed)</span></span>'
+
+  const gateBlocked = d.gateStatus !== "passed"
+  const adoptTitle = gateBlocked ? ' title="必须先通过 eval baseline"' : ""
+  const toolbar =
+    `<div class="toolbar">` +
+    `<button id="learning-adopt"${gateBlocked ? " disabled" : ""}${adoptTitle}>Adopt</button>` +
+    `<button id="learning-rollback" class="ghost">Rollback</button></div>`
+
+  return (
+    `<div class="header"><div><h1>Learning</h1>` +
+    `<p>Offline weight tuning with human-in-the-loop; changes require eval baseline pass before enabling.</p></div>` +
+    `<button class="close" onclick="location.reload()">Refresh</button></div>` +
+    `<div class="cards">${cards}</div>` +
+    `${toolbar}` +
+    `<div class="chart-wrap"><h3>Weight evolution (before → after)</h3>${lineChart(series)}${lineLegend}</div>` +
+    `<div id="learning-table"></div>`
+  )
 }
 
 function sendHtml(response: ServerResponse, html: string): void {
