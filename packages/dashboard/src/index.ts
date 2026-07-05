@@ -1,4 +1,22 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
+import {
+  getEvalsOverview,
+  getEvalRun,
+  getCacheStats,
+  getLearningState,
+  type Mvp2StoreExtension,
+  type EvalsOverviewData,
+  type EvalRunDetailData,
+  type CacheOverviewData,
+  type LearningOverviewData,
+} from "@adaptive-router/sdk"
+
+export type {
+  EvalsOverviewData,
+  EvalRunDetailData,
+  CacheOverviewData,
+  LearningOverviewData,
+} from "@adaptive-router/sdk"
 
 export type DashboardOptions = {
   port?: number
@@ -19,87 +37,17 @@ export type Page = "requests" | "models" | "evals" | "cache" | "learning"
 
 // ---------------------------------------------------------------------------
 // MVP-2 read-only API response contracts (detailed-design §9).
-// `data` field names mirror the SDK types (EvalRunResult / EvalRegressionReport
-// / SemanticCacheEntry / RouteWeights / EvalCaseResult) verbatim so the client
-// consumes them directly. The dashboard package has no SDK dependency, so these
-// are declared locally and kept byte-aligned with §9 by hand.
+// The four response `data` shapes (EvalsOverviewData / EvalRunDetailData /
+// CacheOverviewData / LearningOverviewData) are now imported verbatim from
+// @adaptive-router/sdk (see dashboard-readers.ts) and re-exported above, so the
+// dashboard and the real SDK readers share one source of truth. Only the
+// presentational fold order below stays local.
 // ---------------------------------------------------------------------------
-
-/** One canonical metric key → value bag. Missing key (M=0) renders as "—". */
-export type EvalMetrics = Record<string, number>
-
-/** §9: per-metric baseline→current delta with regression flag. */
-export type EvalRegressionReport = {
-  deltas: Record<string, { baseline: number; current: number; delta: number; regressed: boolean }>
-  passed: boolean
-}
-
-/** §9.1 `GET /api/evals`. */
-export type EvalsOverviewData = {
-  runs: Array<{
-    runId: string
-    datasetId: string
-    weightsVersion: string
-    createdAt: string
-    metrics: EvalMetrics
-  }>
-  /** key=canonical metric key; value=最近 N 个 run 该指标数组，时间升序（左旧右新）。 */
-  sparklines: Record<string, number[]>
-  latestRegression: EvalRegressionReport | null
-  latestPerCase: Array<{ id: string; state: "pass" | "fail" | "na" }>
-}
-
-/** §9.2 `GET /api/evals/:runId`. */
-export type EvalRunDetailData = {
-  run: { runId: string; datasetId: string; weightsVersion: string; createdAt: string; metrics: EvalMetrics }
-  cases: Array<{
-    id: string
-    expectedModel?: string
-    expectedAnyOf?: string[]
-    chosenModel?: string
-    rankOfExpected?: number
-    skipped: boolean
-    fallbackTriggered: boolean
-    assertions: Array<{ key: string; passed: boolean }>
-  }>
-  regression: EvalRegressionReport | null
-}
-
-/** §9.3 `GET /api/cache`. */
-export type CacheOverviewData = {
-  hits: number
-  misses: number
-  total: number
-  hitRate: number
-  mode: string
-  donut: { hits: number; misses: number; degradedFallbacks: number }
-  hitQualityLog: Array<{
-    query: string
-    topMatchQuery: string | null
-    similarity: number | null
-    result: "hit" | "miss"
-    source: "exact" | "semantic" | null
-    embeddingProviderId: string
-    ttlMs: number | null
-    createdAt: string
-  }>
-}
-
-/** §9.4 `GET /api/learning`. */
-export type LearningOverviewData = {
-  activeWeightsVersion: string
-  proposedChangeCount: number
-  evalDelta: EvalRegressionReport | null
-  gateStatus: "passed" | "blocked" | "none"
-  baselineWeights: number[]
-  proposedWeights: number[] | null
-  weightDiff: Array<{ dimension: string; from: number; to: number; delta: number; attribution: string[] }>
-}
 
 /**
  * Fixed 12-dimension flatten order (detailed-design §9.4). `baselineWeights` /
  * `proposedWeights` array indices align 1:1 with `weightDiff[i].dimension`.
- * The frontend MUST NOT re-order these.
+ * The frontend MUST NOT re-order these. Mirrors the SDK's `WEIGHT_ORDER`.
  */
 export const WEIGHT_DIMENSION_ORDER = [
   "tierMatch",
@@ -189,6 +137,12 @@ export type DashboardModel = {
 export type DashboardDataSource = {
   listTraces(): Promise<DashboardTrace[]> | DashboardTrace[]
   listModels?(): Promise<DashboardModel[]> | DashboardModel[]
+  /**
+   * Optional MVP-2 store. When present, the /evals /cache /learning data-access
+   * methods aggregate REAL persisted events via the SDK dashboard-readers;
+   * when absent, they fall back to the demo/empty-state mocks below.
+   */
+  store?: Mvp2StoreExtension
 }
 
 export type DashboardDataAccess = {
@@ -198,6 +152,14 @@ export type DashboardDataAccess = {
   listModels(): Promise<ModelRow[]>
   compareModels(modelIds: string[]): Promise<ModelComparison>
   getRoutingDecision?(decisionId: string): Promise<TraceDetail | undefined>
+  /** §9.1 `/api/evals` — real SDK aggregate when a store is wired, else mock. */
+  getEvalsOverview(): Promise<EvalsOverviewData>
+  /** §9.2 `/api/evals/:runId` — real SDK aggregate when a store is wired, else mock. */
+  getEvalRunDetail(runId: string): Promise<EvalRunDetailData | null>
+  /** §9.3 `/api/cache` — real SDK aggregate when a store is wired, else mock. */
+  getCacheOverview(): Promise<CacheOverviewData>
+  /** §9.4 `/api/learning` — real SDK aggregate when a store is wired, else mock. */
+  getLearningOverview(): Promise<LearningOverviewData>
 }
 
 /**
@@ -369,6 +331,21 @@ export function createReadOnlyDataAccess(source: DashboardDataSource): Dashboard
       if (!trace) return undefined
       return traceToDetail(trace)
     },
+    // MVP-2 read-only aggregates. Real SDK reader over persisted events when a
+    // store is wired (source.store); otherwise the mocks below act as the
+    // no-store demo / empty-state so a bare `createDashboard()` still renders.
+    async getEvalsOverview(): Promise<EvalsOverviewData> {
+      return source.store ? getEvalsOverview(source.store) : readEvalsOverview()
+    },
+    async getEvalRunDetail(runId: string): Promise<EvalRunDetailData | null> {
+      return source.store ? getEvalRun(source.store, runId) : (readEvalRunDetail(runId) ?? null)
+    },
+    async getCacheOverview(): Promise<CacheOverviewData> {
+      return source.store ? getCacheStats(source.store) : readCacheOverview()
+    },
+    async getLearningOverview(): Promise<LearningOverviewData> {
+      return source.store ? getLearningState(source.store) : readLearningOverview()
+    },
   }
 }
 
@@ -422,12 +399,12 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     // MVP-2 read-only API (detailed-design §9). :runId branch must precede the
     // bare /api/evals branch so it isn't shadowed.
     if (url.pathname.startsWith("/api/evals/")) {
-      const detail = readEvalRunDetail(decodeURIComponent(url.pathname.replace("/api/evals/", "")))
+      const detail = await data.getEvalRunDetail(decodeURIComponent(url.pathname.replace("/api/evals/", "")))
       return detail ? sendJson(response, detail) : sendJson(response, { error: "not found" }, 404)
     }
-    if (url.pathname === "/api/evals") return sendJson(response, readEvalsOverview())
-    if (url.pathname === "/api/cache") return sendJson(response, readCacheOverview())
-    if (url.pathname === "/api/learning") return sendJson(response, readLearningOverview())
+    if (url.pathname === "/api/evals") return sendJson(response, await data.getEvalsOverview())
+    if (url.pathname === "/api/cache") return sendJson(response, await data.getCacheOverview())
+    if (url.pathname === "/api/learning") return sendJson(response, await data.getLearningOverview())
     const pageMap: Record<string, Page> = {
       "/": "requests",
       "/requests": "requests",
@@ -436,7 +413,14 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       "/cache": "cache",
       "/learning": "learning",
     }
-    if (url.pathname in pageMap) return sendHtml(response, renderDashboardHtml(pageMap[url.pathname]))
+    if (url.pathname in pageMap) {
+      const [evals, cache, learning] = await Promise.all([
+        data.getEvalsOverview(),
+        data.getCacheOverview(),
+        data.getLearningOverview(),
+      ])
+      return sendHtml(response, renderDashboardHtml(pageMap[url.pathname], { evals, cache, learning }))
+    }
     return sendJson(response, { error: "not found" }, 404)
   } catch (error) {
     return sendJson(response, { error: error instanceof Error ? error.message : "unknown error" }, 500)
@@ -461,12 +445,15 @@ function parseRequestFilter(url: URL): RequestFilter {
   return filter
 }
 
-function renderDashboardHtml(initialPage: Page): string {
+function renderDashboardHtml(
+  initialPage: Page,
+  data: { evals: EvalsOverviewData; cache: CacheOverviewData; learning: LearningOverviewData },
+): string {
   // Charts + cards are rendered server-side into each new section (design-spec
-  // §4.4); the client only wires data tables + drawer interactions.
-  const evals = readEvalsOverview()
-  const cache = readCacheOverview()
-  const learning = readLearningOverview()
+  // §4.4); the client only wires data tables + drawer interactions. The three
+  // MVP-2 datasets are pre-fetched through the data-access layer (real SDK
+  // readers when a store is wired, mocks otherwise) and passed in.
+  const { evals, cache, learning } = data
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -675,17 +662,17 @@ function escapeAttr(s: string): string {
 }
 
 // ===========================================================================
-// MVP-2 read-only data readers (detailed-design §9).
+// MVP-2 no-store fallback readers (detailed-design §9).
 //
-// TODO: swap to real SDK readers when backend lands. Backend will export from
-// @adaptive-router/sdk: listEvalRuns / getLatestRegression / getEvalRun /
-// getCacheStats / getLearningState. The dashboard package currently has no SDK
-// dependency, so these return §9-contract-shaped placeholder data that lets the
-// three pages render and typecheck. During integration, replace each body with
-// the corresponding SDK call and keep the return shapes identical.
+// These return §9-contract-shaped demo/empty-state data and are used ONLY when
+// no Mvp2StoreExtension is wired into the DashboardDataSource (e.g. a bare
+// `createDashboard()` for local demos / tests). When a store IS present, the
+// data-access layer instead calls the real SDK readers
+// (getEvalsOverview / getEvalRun / getCacheStats / getLearningState) from
+// @adaptive-router/sdk. Return shapes are identical to the SDK types.
 // ===========================================================================
 
-// TODO: swap to real reader when backend lands → listEvalRuns/getLatestRegression/latestPerCase.
+// No-store fallback for §9.1 GET /api/evals (real path: SDK getEvalsOverview).
 function readEvalsOverview(): EvalsOverviewData {
   const runs: EvalsOverviewData["runs"] = [
     { runId: "run_1720000001_a1", datasetId: "golden-routing@3f9c2a1b", weightsVersion: "builtin", createdAt: "2026-07-01T09:12:00.000Z", metrics: { routingAccuracy: 0.86, top1ExpectMatch: 0.71, costCompliance: 0.94, fallbackRate: 0.08 } },
@@ -702,6 +689,8 @@ function readEvalsOverview(): EvalsOverviewData {
       fallbackRate: [0.12, 0.1, 0.08, 0.07, 0.05],
     },
     latestRegression: {
+      baselineRunId: "run_1720086402_b2",
+      currentRunId: "run_1720172803_c3",
       deltas: {
         routingAccuracy: { baseline: 0.88, current: 0.91, delta: 0.03, regressed: false },
         top1ExpectMatch: { baseline: 0.74, current: 0.78, delta: 0.04, regressed: false },
@@ -714,7 +703,7 @@ function readEvalsOverview(): EvalsOverviewData {
   }
 }
 
-// TODO: swap to real reader when backend lands → getEvalRun(store, runId).
+// No-store fallback for §9.2 GET /api/evals/:runId (real path: SDK getEvalRun).
 function readEvalRunDetail(runId: string): EvalRunDetailData | undefined {
   const overview = readEvalsOverview()
   const run = overview.runs.find((r) => r.runId === runId)
@@ -739,7 +728,7 @@ function readEvalRunDetail(runId: string): EvalRunDetailData | undefined {
   }
 }
 
-// TODO: swap to real reader when backend lands → getCacheStats(store).
+// No-store fallback for §9.3 GET /api/cache (real path: SDK getCacheStats).
 function readCacheOverview(): CacheOverviewData {
   const hits = 742
   const misses = 258
@@ -761,7 +750,7 @@ function readCacheOverview(): CacheOverviewData {
   }
 }
 
-// TODO: swap to real reader when backend lands → getLearningState(store).
+// No-store fallback for §9.4 GET /api/learning (real path: SDK getLearningState).
 function readLearningOverview(): LearningOverviewData {
   const baseline = [40, 10, 15, 10, 6, 3, 100, 30, 15, 12, 8, 0]
   const proposed = [43, 9, 16, 11, 6, 3, 96, 31, 15, 12, 8, 0]
@@ -774,6 +763,8 @@ function readLearningOverview(): LearningOverviewData {
     activeWeightsVersion: "builtin",
     proposedChangeCount: baseline.filter((b, i) => b !== proposed[i]).length,
     evalDelta: {
+      baselineRunId: "run_1720086402_b2",
+      currentRunId: "run_1720172803_c3",
       deltas: {
         routingAccuracy: { baseline: 0.88, current: 0.91, delta: 0.03, regressed: false },
         top1ExpectMatch: { baseline: 0.74, current: 0.78, delta: 0.04, regressed: false },
