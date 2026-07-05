@@ -1,6 +1,13 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises"
 import { dirname } from "node:path"
-import type { RouterTrace, StoredRequest, TraceStoreReader, TraceStoreSummary } from "./types.js"
+import type {
+  EvalRunResult,
+  RouterTrace,
+  SemanticCacheEntry,
+  StoredRequest,
+  TraceStoreReader,
+  TraceStoreSummary,
+} from "./types.js"
 
 export const storageSchemaVersion = "1.0"
 
@@ -55,6 +62,35 @@ export const sqliteSchema = [
   `CREATE INDEX IF NOT EXISTS idx_provider_calls_trace_id ON provider_calls(trace_id)`,
   `CREATE INDEX IF NOT EXISTS idx_provider_calls_provider ON provider_calls(provider)`,
   `CREATE INDEX IF NOT EXISTS idx_provider_calls_model_id ON provider_calls(model_id)`,
+  // --- MVP-2 tables (append-only schema evolution; no new dependency) -------
+  `CREATE TABLE IF NOT EXISTS semantic_cache (
+    key TEXT PRIMARY KEY,
+    embedding TEXT,
+    embedding_provider_id TEXT NOT NULL,
+    tenant_scope TEXT NOT NULL DEFAULT 'default',
+    request_json TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    router_trace_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    ttl_ms INTEGER
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_semantic_cache_scope_provider ON semantic_cache(tenant_scope, embedding_provider_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_semantic_cache_created_at ON semantic_cache(created_at)`,
+  `CREATE TABLE IF NOT EXISTS eval_runs (
+    run_id TEXT PRIMARY KEY,
+    dataset_id TEXT NOT NULL,
+    weights_version TEXT NOT NULL,
+    metrics_json TEXT NOT NULL,
+    per_case_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_eval_runs_dataset ON eval_runs(dataset_id)`,
+  `CREATE TABLE IF NOT EXISTS eval_baselines (
+    dataset_id TEXT PRIMARY KEY,
+    baseline_run_id TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(baseline_run_id) REFERENCES eval_runs(run_id)
+  )`,
 ] as const
 
 export type JsonlTraceStoreOptions = {
@@ -75,7 +111,62 @@ type JsonlEvent = {
   payload: RouterTrace
 }
 
-export function createJsonlTraceStore(options: JsonlTraceStoreOptions): TraceStoreReader {
+/**
+ * MVP-2 hit-quality log row (mirrors cache.ts CacheLookupEvent, redeclared here
+ * to keep storage free of a runtime import cycle with cache.ts).
+ */
+export type CacheLookupRecord = {
+  key: string
+  topMatchQuery: string | null
+  similarity: number | null
+  hit: boolean
+  source: "exact" | "semantic" | null
+  embeddingProviderId: string
+  createdAt: string
+}
+
+/** MVP-2 JSONL events appended alongside request_finished (§5 detailed design). */
+type Mvp2JsonlEvent =
+  | { event_type: "semantic_cache_set"; schema_version: string; timestamp: string; tenant_scope: string; payload: SemanticCacheEntry }
+  | { event_type: "cache_lookup"; schema_version: string; timestamp: string; payload: CacheLookupRecord }
+  | { event_type: "eval_run_finished"; schema_version: string; timestamp: string; payload: EvalRunResult }
+  | { event_type: "eval_baseline_saved"; schema_version: string; timestamp: string; payload: { datasetId: string; baselineRunId: string } }
+  | { event_type: "weights_change"; schema_version: string; timestamp: string; payload: Record<string, unknown> }
+
+/**
+ * Read-only accessors for MVP-2 data used by the dashboard /api/* endpoints and
+ * the CLI eval commands. Optional so existing stores stay valid; the JSONL and
+ * SQLite stores below implement them.
+ */
+export type Mvp2StoreExtension = {
+  writeEvalRun?(run: EvalRunResult): Promise<void> | void
+  getEvalRun?(runId: string): Promise<EvalRunResult | undefined> | (EvalRunResult | undefined)
+  listEvalRuns?(datasetId?: string): Promise<EvalRunResult[]> | EvalRunResult[]
+  saveBaselinePointer?(datasetId: string, runId: string): Promise<void> | void
+  getBaselineRunId?(datasetId: string): Promise<string | undefined> | (string | undefined)
+  writeCacheEntry?(entry: SemanticCacheEntry, tenantScope: string): Promise<void> | void
+  writeCacheLookup?(event: CacheLookupRecord): Promise<void> | void
+  listCacheLookups?(limit?: number): Promise<CacheLookupRecord[]> | CacheLookupRecord[]
+  listCacheEntries?(): Promise<SemanticCacheEntry[]> | SemanticCacheEntry[]
+  writeWeightsChange?(payload: Record<string, unknown>): Promise<void> | void
+  listWeightsChanges?(): Promise<Record<string, unknown>[]> | Record<string, unknown>[]
+}
+
+export type ExtendedTraceStore = TraceStoreReader & Mvp2StoreExtension
+
+export function createJsonlTraceStore(options: JsonlTraceStoreOptions): ExtendedTraceStore {
+  async function appendEvent(event: Mvp2JsonlEvent): Promise<void> {
+    await ensureParentDir(options.path)
+    await appendFile(options.path, `${JSON.stringify(event)}\n`, { encoding: "utf8" })
+  }
+  async function readRawEvents(): Promise<Record<string, unknown>[]> {
+    try {
+      const content = await readFile(options.path, { encoding: "utf8" })
+      return content.split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>)
+    } catch {
+      return []
+    }
+  }
   return {
     async writeTrace(trace) {
       await ensureParentDir(options.path)
@@ -101,10 +192,59 @@ export function createJsonlTraceStore(options: JsonlTraceStoreOptions): TraceSto
     async getRequest(traceId) {
       return tracesToRequests(await readJsonlTraces(options.path)).find((request) => request.traceId === traceId)
     },
+    // --- MVP-2 append-only events -----------------------------------------
+    async writeEvalRun(run) {
+      await appendEvent({ event_type: "eval_run_finished", schema_version: storageSchemaVersion, timestamp: new Date().toISOString(), payload: run })
+    },
+    async getEvalRun(runId) {
+      return (await this.listEvalRuns!()).find((run) => run.runId === runId)
+    },
+    async listEvalRuns(datasetId) {
+      const runs = (await readRawEvents())
+        .filter((e) => e.event_type === "eval_run_finished")
+        .map((e) => e.payload as EvalRunResult)
+      return datasetId ? runs.filter((run) => run.datasetId === datasetId) : runs
+    },
+    async saveBaselinePointer(datasetId, runId) {
+      await appendEvent({ event_type: "eval_baseline_saved", schema_version: storageSchemaVersion, timestamp: new Date().toISOString(), payload: { datasetId, baselineRunId: runId } })
+    },
+    async getBaselineRunId(datasetId) {
+      const pointers = (await readRawEvents())
+        .filter((e) => e.event_type === "eval_baseline_saved")
+        .map((e) => e.payload as { datasetId: string; baselineRunId: string })
+        .filter((p) => p.datasetId === datasetId)
+      return pointers.at(-1)?.baselineRunId
+    },
+    async writeCacheEntry(entry, tenantScope) {
+      await appendEvent({ event_type: "semantic_cache_set", schema_version: storageSchemaVersion, timestamp: new Date().toISOString(), tenant_scope: tenantScope, payload: entry })
+    },
+    async writeCacheLookup(event) {
+      await appendEvent({ event_type: "cache_lookup", schema_version: storageSchemaVersion, timestamp: new Date().toISOString(), payload: event })
+    },
+    async listCacheLookups(limit) {
+      const rows = (await readRawEvents())
+        .filter((e) => e.event_type === "cache_lookup")
+        .map((e) => e.payload as CacheLookupRecord)
+        .reverse()
+      return limit ? rows.slice(0, limit) : rows
+    },
+    async listCacheEntries() {
+      return (await readRawEvents())
+        .filter((e) => e.event_type === "semantic_cache_set")
+        .map((e) => e.payload as SemanticCacheEntry)
+    },
+    async writeWeightsChange(payload) {
+      await appendEvent({ event_type: "weights_change", schema_version: storageSchemaVersion, timestamp: new Date().toISOString(), payload })
+    },
+    async listWeightsChanges() {
+      return (await readRawEvents())
+        .filter((e) => e.event_type === "weights_change")
+        .map((e) => e.payload as Record<string, unknown>)
+    },
   }
 }
 
-export async function createSQLiteTraceStore(options: SQLiteTraceStoreOptions): Promise<TraceStoreReader> {
+export async function createSQLiteTraceStore(options: SQLiteTraceStoreOptions): Promise<ExtendedTraceStore> {
   try {
     const moduleLoader = Function("return import('node:sqlite')") as () => Promise<{ DatabaseSync: new (path: string) => SQLiteDatabase }>
     const sqlite = await moduleLoader()
@@ -131,7 +271,10 @@ type SQLiteStatement = {
   get(...params: unknown[]): unknown
 }
 
-function createSQLiteBackedTraceStore(database: SQLiteDatabase): TraceStoreReader {
+function createSQLiteBackedTraceStore(database: SQLiteDatabase): ExtendedTraceStore {
+  // A single append-only table for MVP-2 JSONL-parity events keeps parity with
+  // the JSONL store's semantics and avoids overfitting columns; the dedicated
+  // eval_runs/eval_baselines/semantic_cache tables hold the queryable rows.
   return {
     writeTrace(trace) {
       const createdAt = new Date().toISOString()
@@ -166,6 +309,79 @@ function createSQLiteBackedTraceStore(database: SQLiteDatabase): TraceStoreReade
       const traces = row ? rowsToTraces([row], database) : []
       return tracesToRequests(traces)[0]
     },
+    // --- MVP-2 -------------------------------------------------------------
+    writeEvalRun(run) {
+      database.prepare(
+        `INSERT OR REPLACE INTO eval_runs (run_id, dataset_id, weights_version, metrics_json, per_case_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(run.runId, run.datasetId, run.weightsVersion, JSON.stringify(run.metrics), JSON.stringify(run.perCase), run.createdAt)
+    },
+    getEvalRun(runId) {
+      const row = database.prepare(`SELECT * FROM eval_runs WHERE run_id = ?`).get(runId)
+      return row ? rowToEvalRun(row as Record<string, unknown>) : undefined
+    },
+    listEvalRuns(datasetId) {
+      const rows = datasetId
+        ? database.prepare(`SELECT * FROM eval_runs WHERE dataset_id = ? ORDER BY created_at DESC`).all(datasetId)
+        : database.prepare(`SELECT * FROM eval_runs ORDER BY created_at DESC`).all()
+      return rows.map((row) => rowToEvalRun(row as Record<string, unknown>))
+    },
+    saveBaselinePointer(datasetId, runId) {
+      database.prepare(
+        `INSERT OR REPLACE INTO eval_baselines (dataset_id, baseline_run_id, updated_at) VALUES (?, ?, ?)`,
+      ).run(datasetId, runId, new Date().toISOString())
+    },
+    getBaselineRunId(datasetId) {
+      const row = database.prepare(`SELECT baseline_run_id FROM eval_baselines WHERE dataset_id = ?`).get(datasetId) as { baseline_run_id?: string } | undefined
+      return row?.baseline_run_id
+    },
+    writeCacheEntry(entry, tenantScope) {
+      database.prepare(
+        `INSERT OR REPLACE INTO semantic_cache (key, embedding, embedding_provider_id, tenant_scope, request_json, response_json, router_trace_json, created_at, ttl_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        entry.key,
+        entry.embedding ? JSON.stringify(Array.from(entry.embedding)) : null,
+        entry.embeddingProviderId,
+        tenantScope,
+        JSON.stringify(entry.request),
+        JSON.stringify(entry.response),
+        JSON.stringify(entry.routerTrace),
+        entry.createdAt,
+        entry.ttlMs ?? null,
+      )
+    },
+    listCacheEntries() {
+      const rows = database.prepare(`SELECT * FROM semantic_cache ORDER BY created_at DESC`).all()
+      return rows.map((row) => rowToCacheEntry(row as Record<string, unknown>))
+    },
+    // cache_lookup + weights_change are event streams; SQLite path keeps them in
+    // memory-free no-ops so the queryable tables above stay the source of truth.
+    // The JSONL store retains the full event log when durability is needed.
+  }
+}
+
+function rowToEvalRun(row: Record<string, unknown>): EvalRunResult {
+  return {
+    runId: String(row.run_id),
+    datasetId: String(row.dataset_id),
+    weightsVersion: String(row.weights_version),
+    metrics: JSON.parse(String(row.metrics_json)),
+    perCase: JSON.parse(String(row.per_case_json)),
+    createdAt: String(row.created_at),
+  }
+}
+
+function rowToCacheEntry(row: Record<string, unknown>): SemanticCacheEntry {
+  return {
+    key: String(row.key),
+    embedding: row.embedding ? JSON.parse(String(row.embedding)) : undefined,
+    embeddingProviderId: String(row.embedding_provider_id),
+    request: JSON.parse(String(row.request_json)),
+    response: JSON.parse(String(row.response_json)),
+    routerTrace: JSON.parse(String(row.router_trace_json)),
+    createdAt: String(row.created_at),
+    ttlMs: row.ttl_ms === null || row.ttl_ms === undefined ? undefined : Number(row.ttl_ms),
   }
 }
 

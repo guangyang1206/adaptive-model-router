@@ -9,4 +9,12 @@ declare module "node:path" {
   export function dirname(path: string): string
 }
 
+declare module "node:crypto" {
+  export type Hash = {
+    update(data: string): Hash
+    digest(encoding: "hex"): string
+  }
+  export function createHash(algorithm: string): Hash
+}
+
 type BufferEncoding = "utf8"

@@ -2,11 +2,23 @@ export * from "./types.js"
 export * from "./providers.js"
 export * from "./storage.js"
 export * from "./adapters.js"
+export * from "./embedding.js"
+export * from "./cache.js"
+export * from "./learning.js"
+export * from "./eval/dataset.js"
+export * from "./eval/runner.js"
+export * from "./eval/metrics.js"
+export * from "./eval/baseline.js"
+export * from "./eval/judge.js"
+
+import { resolveEmbeddingProvider } from "./embedding.js"
 
 import type {
   AdaptiveRouterError,
   AdaptiveRouterErrorCode,
+  CacheContext,
   CandidateModel,
+  EmbeddingProvider,
   ModelCapability,
   ModelProfile,
   OpenAICompatibleClient,
@@ -15,11 +27,29 @@ import type {
   RoutePolicy,
   RouteRequest,
   RouteResult,
+  RouteWeights,
   RouterConfig,
   RouterTrace,
   TraceStore,
   Usage,
 } from "./types.js"
+
+/**
+ * Default routing weights. Every value is read verbatim from MVP-1's
+ * hard-coded scoreModel (see detailed-design §0), so scoring with
+ * BUILTIN_WEIGHTS is byte-for-byte identical to MVP-1. Changing a single value
+ * here breaks the zero-byte compatibility guarantee — there is a snapshot test
+ * that asserts exactly this.
+ */
+export const BUILTIN_WEIGHTS: RouteWeights = {
+  version: "builtin",
+  tierMatch: 40,
+  tierMismatch: 10,
+  successRate: 15,
+  latency: { low: 10, medium: 6, high: 3 },
+  costCoefficient: 100,
+  health: { ok: 30, degraded: 15, limited: 12, unknown: 8, down: 0 },
+}
 
 export type EvaluationResult = {
   candidates: CandidateModel[]
@@ -49,6 +79,17 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
   const configuredModels = config.models ?? []
   const policy = normalizePolicy(config.policy)
   const store = config.store ?? createMemoryTraceStore()
+  const weights = config.weights ?? BUILTIN_WEIGHTS
+  const cache = config.cache
+
+  // Embedding provider is resolved lazily on first cache use and memoized, so
+  // routers that never touch the cache pay nothing (and the dynamic import of
+  // an optional peer dependency never runs). resolve() never throws.
+  let embeddingPromise: Promise<{ provider: EmbeddingProvider; notes: string[] }> | undefined
+  function getEmbedding(): Promise<{ provider: EmbeddingProvider; notes: string[] }> {
+    if (!embeddingPromise) embeddingPromise = resolveEmbeddingProvider(config.embedding ?? {})
+    return embeddingPromise
+  }
 
   async function models(): Promise<ModelProfile[]> {
     if (configuredModels.length > 0) return configuredModels
@@ -71,7 +112,7 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
       return {
         modelId: model.id,
         provider: model.provider,
-        score: skipped ? 0 : scoreModel(model, request, policy),
+        score: skipped ? 0 : scoreModel(model, request, policy, weights),
         reasons: buildReasons(model, request, policy),
         skipped,
         skippedReason: skippedReasons[0],
@@ -86,12 +127,42 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
   }
 
   async function chat(request: RouteRequest): Promise<RouteResult> {
+    // --- MVP-2: front cache lookup (only when a cache is configured) ---------
+    let cacheNotes: string[] | undefined
+    let cacheCtx: CacheContext | undefined
+    if (cache) {
+      const { provider: embProvider, notes: embNotes } = await getEmbedding()
+      const decisionForKey = await evaluate(request)
+      const chosenForKey = decisionForKey.candidates.find((candidate) => !candidate.skipped)
+      cacheCtx = {
+        modelId: chosenForKey?.modelId ?? "none",
+        embeddingProviderId: embProvider.id,
+        embed: (texts) => embProvider.embed(texts),
+        degraded: embProvider.degraded,
+        tenantScope: typeof request.metadata?.tenantScope === "string" ? request.metadata.tenantScope : undefined,
+      }
+      const lookup = await cache.get(request, cacheCtx)
+      cacheNotes = [...embNotes, ...lookup.notes]
+      if (lookup.hit) {
+        const trace = createTrace(lookup.entry.routerTrace.chosenModel, lookup.entry.routerTrace.candidates, lookup.entry.routerTrace.reason, "success", 0)
+        trace.usage = lookup.entry.routerTrace.usage
+        trace.estimated = lookup.entry.routerTrace.estimated
+        trace.estimatedCostUsd = lookup.entry.routerTrace.estimatedCostUsd
+        trace.cacheHit = true
+        if (weights.version !== "builtin") trace.weightsVersion = weights.version
+        trace.notes = cacheNotes
+        await safeWriteTrace(store, trace)
+        return { response: lookup.entry.response, routerTrace: trace }
+      }
+    }
+
     const decision = await evaluate(request)
     const selectable = decision.candidates.filter((candidate) => !candidate.skipped)
 
     if (selectable.length === 0) {
       const trace = createTrace(undefined, decision.candidates, "No candidate model satisfied routing constraints.", "failed")
       trace.attempts.push({ attemptNo: 1, modelId: "none", provider: "none", status: "skipped", errorCode: "AR_NO_CANDIDATE" })
+      if (cacheNotes?.length) trace.notes = cacheNotes
       await safeWriteTrace(store, trace)
       return { response: { content: "", raw: { error: "AR_NO_CANDIDATE" } }, routerTrace: trace }
     }
@@ -101,7 +172,8 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
     // Streaming disables fallback on purpose: retrying mid-stream would tear a
     // partially-emitted response. Record it so explainability stays honest —
     // otherwise a caller who set maxFallbacks:3 + stream:true silently gets 0.
-    const notes = request.stream && policy.maxFallbacks > 0 ? ["fallback disabled: stream mode"] : undefined
+    const streamNote = request.stream && policy.maxFallbacks > 0 ? ["fallback disabled: stream mode"] : undefined
+    const notes = mergeNotes(cacheNotes, streamNote)
     const attempts: RouteAttempt[] = []
     const started = Date.now()
     let lastError: AdaptiveRouterError | undefined
@@ -127,6 +199,12 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
         trace.estimated = usage.estimated
         trace.estimatedCostUsd = usage.costUsd
         trace.notes = notes
+        // --- MVP-2: backfill cache on success (only when configured) ---------
+        if (cache && cacheCtx) {
+          trace.cacheHit = false
+          if (weights.version !== "builtin") trace.weightsVersion = weights.version
+          await cache.set(request, response, trace, cacheCtx)
+        }
         await safeWriteTrace(store, trace)
         return { response, routerTrace: trace }
       } catch (error) {
@@ -265,13 +343,13 @@ function getSkippedReasons(model: ModelProfile, providerConfigured: boolean, mis
   return reasons
 }
 
-function scoreModel(model: ModelProfile, request: RouteRequest, policy: Required<RoutePolicy>): number {
+function scoreModel(model: ModelProfile, request: RouteRequest, policy: Required<RoutePolicy>, weights: RouteWeights = BUILTIN_WEIGHTS): number {
   const requestedQuality = request.route?.quality ?? policy.defaultQuality
-  const tierScore = tierToScore(model.tier) >= tierToScore(requestedQuality) ? 40 : 10
-  const healthScore = healthToScore(model.health?.status)
-  const successScore = Math.round((model.health?.successRate ?? 0.5) * 15)
-  const latencyScore = model.latencyClass === "low" ? 10 : model.latencyClass === "medium" ? 6 : 3
-  const costScore = policy.costMode === "ignore" ? 0 : Math.max(0, 10 - estimateCost(model, request).costUsd * 100)
+  const tierScore = tierToScore(model.tier) >= tierToScore(requestedQuality) ? weights.tierMatch : weights.tierMismatch
+  const healthScore = weights.health[model.health?.status ?? "unknown"] ?? weights.health.unknown
+  const successScore = Math.round((model.health?.successRate ?? 0.5) * weights.successRate)
+  const latencyScore = weights.latency[model.latencyClass === "low" ? "low" : model.latencyClass === "medium" ? "medium" : "high"]
+  const costScore = policy.costMode === "ignore" ? 0 : Math.max(0, 10 - estimateCost(model, request).costUsd * weights.costCoefficient)
   return tierScore + healthScore + successScore + latencyScore + costScore
 }
 
@@ -288,10 +366,6 @@ function tierToScore(tier: string): number {
   return { standard: 1, balanced: 2, high: 3, critical: 4 }[tier] ?? 2
 }
 
-function healthToScore(status: string | undefined): number {
-  return { ok: 30, degraded: 15, limited: 12, unknown: 8, down: 0 }[status ?? "unknown"] ?? 8
-}
-
 function estimateUsage(model: ModelProfile, request: RouteRequest): Usage {
   const inputTokens = Math.max(1, Math.ceil(totalMessageChars(request) / 4))
   const outputTokens = 32
@@ -305,7 +379,7 @@ function estimateUsage(model: ModelProfile, request: RouteRequest): Usage {
   }
 }
 
-function estimateCost(model: ModelProfile, request: RouteRequest, outputTokens = 32): { costUsd: number } {
+export function estimateCost(model: ModelProfile, request: RouteRequest, outputTokens = 32): { costUsd: number } {
   const inputTokens = Math.max(1, Math.ceil(totalMessageChars(request) / 4))
   const inputRate = model.cost?.inputPer1M ?? 0
   const outputRate = model.cost?.outputPer1M ?? inputRate
@@ -371,4 +445,14 @@ async function safeWriteTrace(store: TraceStore, trace: RouterTrace): Promise<vo
   } catch {
     // Storage errors must not break the model call path in MVP-0.
   }
+}
+
+/**
+ * Merge optional note arrays into a single array, or undefined when both are
+ * empty. Keeps the MVP-1 contract that traces without notes have `notes:
+ * undefined` (not `[]`) so existing snapshot expectations stay intact.
+ */
+function mergeNotes(a: string[] | undefined, b: string[] | undefined): string[] | undefined {
+  const merged = [...(a ?? []), ...(b ?? [])]
+  return merged.length ? merged : undefined
 }
