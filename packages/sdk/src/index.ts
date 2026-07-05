@@ -10,6 +10,7 @@ export * from "./eval/runner.js"
 export * from "./eval/metrics.js"
 export * from "./eval/baseline.js"
 export * from "./eval/judge.js"
+export * from "./dashboard-readers.js"
 
 import { resolveEmbeddingProvider } from "./embedding.js"
 
