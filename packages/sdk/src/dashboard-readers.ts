@@ -40,6 +40,19 @@ export type EvalRunDetailData = {
   regression: EvalRegressionReport | null
 }
 
+/** §9.1 Pass/Fail matrix cell for the latest run. */
+export type EvalPassFailCell = { id: string; state: "pass" | "fail" | "na" }
+
+/** §9.1 `GET /api/evals` response `data`. */
+export type EvalsOverviewData = {
+  runs: Array<
+    Pick<EvalRunResult, "runId" | "datasetId" | "weightsVersion" | "createdAt"> & { metrics: Record<string, number> }
+  >
+  sparklines: Record<string, number[]>
+  latestRegression: EvalRegressionReport | null
+  latestPerCase: EvalPassFailCell[]
+}
+
 /** §9.3 `GET /api/cache` response `data`. */
 export type CacheOverviewData = {
   hits: number
@@ -118,6 +131,58 @@ export async function getLatestRegression(store: DashboardStore): Promise<EvalRe
 }
 
 /**
+ * Fold a per-case `expectedSatisfied` map into the §9.1 Pass/Fail state:
+ * no assertion keys (or a skipped case) ⇒ `na`; any false ⇒ `fail`; all true
+ * ⇒ `pass`. Mirrors detailed-design §9.1 `state` semantics.
+ */
+function foldCaseState(result: EvalCaseResult): EvalPassFailCell["state"] {
+  const values = Object.values(result.expectedSatisfied)
+  if (result.skipped || values.length === 0) return "na"
+  return values.every(Boolean) ? "pass" : "fail"
+}
+
+/**
+ * §9.1 `GET /api/evals` composite. Reuses {@link listEvalRuns} and
+ * {@link getLatestRegression}, then derives the two purely-presentational
+ * aggregates the endpoint needs — no persistence change required:
+ * - `sparklines`: per canonical metric key, the metric's value across runs in
+ *   createdAt-ASCENDING order (oldest→newest, left→right on the chart). A run
+ *   missing a metric is skipped for that key (never back-filled with 0, so a
+ *   gap can't masquerade as a real drop).
+ * - `latestPerCase`: the newest run's per-case results folded to pass/fail/na.
+ * Empty store ⇒ `{ runs: [], sparklines: {}, latestRegression: null,
+ * latestPerCase: [] }`.
+ */
+export async function getEvalsOverview(store: DashboardStore, limit?: number): Promise<EvalsOverviewData> {
+  const descending = await listEvalRuns(store, limit)
+  const runs = descending.map((run) => ({
+    runId: run.runId,
+    datasetId: run.datasetId,
+    weightsVersion: run.weightsVersion,
+    createdAt: run.createdAt,
+    metrics: run.metrics,
+  }))
+
+  // Sparklines are time-ascending; listEvalRuns is descending, so reverse.
+  const ascending = descending.slice().reverse()
+  const sparklines: Record<string, number[]> = {}
+  for (const run of ascending) {
+    for (const [key, value] of Object.entries(run.metrics)) {
+      if (typeof value !== "number") continue
+      ;(sparklines[key] ??= []).push(value)
+    }
+  }
+
+  const latestRegression = await getLatestRegression(store)
+  const latest = descending[0]
+  const latestPerCase: EvalPassFailCell[] = latest
+    ? latest.perCase.map((result) => ({ id: result.caseId, state: foldCaseState(result) }))
+    : []
+
+  return { runs, sparklines, latestRegression, latestPerCase }
+}
+
+/**
  * §9.2 single-run detail. Assertions are the flattened `expectedSatisfied`
  * map. `expectedModel`/`expectedAnyOf` come from the dataset's `expect`, which
  * is NOT persisted in `EvalRunResult`; they are left undefined (both optional
@@ -169,10 +234,10 @@ export async function getEvalRun(store: DashboardStore, runId: string): Promise<
 /**
  * §9.3 cache overview. Aggregates the hit-quality log into hits/misses/hitRate
  * and the three-segment donut. `mode` is inferred from the persisted lookups:
- * any `semantic`-sourced hit ⇒ `semantic@<threshold>`, else `exact`. The stored
- * `CacheLookupRecord` carries neither the raw query text, the entry TTL, nor a
- * degraded flag, so `query` falls back to the lookup key, `ttlMs` is null, and
- * `degradedFallbacks` is 0 (see the note sent to team-lead).
+ * a degraded lookup ⇒ `degraded:exact`, else any `semantic`-sourced hit ⇒
+ * `semantic@<threshold>`, else `exact`. `query` is the real normalized prompt
+ * text and `degradedFallbacks` counts degraded (exact-only fallback) lookups.
+ * `ttlMs` stays null: the in-memory LRU has no per-entry TTL to report.
  */
 export async function getCacheStats(store: DashboardStore): Promise<CacheOverviewData> {
   const lookups = await safeCall(
@@ -183,8 +248,9 @@ export async function getCacheStats(store: DashboardStore): Promise<CacheOvervie
   const total = lookups.length
   const misses = total - hits
   const hitRate = total === 0 ? 0 : hits / total
+  const degradedFallbacks = lookups.filter((l) => l.degraded).length
   const usedSemantic = lookups.some((l) => l.source === "semantic")
-  const mode = usedSemantic ? `semantic@${DEFAULT_CACHE_THRESHOLD}` : "exact"
+  const mode = degradedFallbacks > 0 ? "degraded:exact" : usedSemantic ? `semantic@${DEFAULT_CACHE_THRESHOLD}` : "exact"
 
   return {
     hits,
@@ -192,9 +258,9 @@ export async function getCacheStats(store: DashboardStore): Promise<CacheOvervie
     total,
     hitRate,
     mode,
-    donut: { hits, misses, degradedFallbacks: 0 },
+    donut: { hits, misses, degradedFallbacks },
     hitQualityLog: lookups.map((l) => ({
-      query: l.key,
+      query: l.query,
       topMatchQuery: l.topMatchQuery,
       similarity: l.similarity,
       result: l.hit ? "hit" : "miss",

@@ -117,10 +117,12 @@ type JsonlEvent = {
  */
 export type CacheLookupRecord = {
   key: string
+  query: string
   topMatchQuery: string | null
   similarity: number | null
   hit: boolean
   source: "exact" | "semantic" | null
+  degraded: boolean
   embeddingProviderId: string
   createdAt: string
 }

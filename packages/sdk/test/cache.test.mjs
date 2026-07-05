@@ -183,4 +183,18 @@ test("persistence hook receives cache-set and lookup events (best-effort)", asyn
   assert.equal(lookups.length, 1)
   assert.equal(lookups[0].hit, true)
   assert.equal(lookups[0].source, "exact")
+  // §9.3 persistence: real query text + degraded flag are recorded.
+  assert.equal(lookups[0].query, queryTextOf(req("persist me")))
+  assert.equal(lookups[0].degraded, false)
+})
+
+test("lookup event marks degraded=true on an exact-only degraded context", async () => {
+  const lookups = []
+  const cache = createMemorySemanticCache({ store: { writeCacheLookup: (ev) => lookups.push(ev) } })
+  // degraded provider, no hashSemantic ⇒ exact-only path, miss on empty cache.
+  await cache.get(req("anything"), ctx({ degraded: true }))
+  assert.equal(lookups.length, 1)
+  assert.equal(lookups[0].hit, false)
+  assert.equal(lookups[0].degraded, true)
+  assert.equal(lookups[0].query, queryTextOf(req("anything")))
 })

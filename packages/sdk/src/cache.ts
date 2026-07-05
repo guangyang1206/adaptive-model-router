@@ -43,10 +43,14 @@ export type CachePersistence = {
 /** One (query, match, similarity, hit/miss) row — the hit-quality log (§3.5). */
 export type CacheLookupEvent = {
   key: string
+  /** Normalized prompt text of the incoming query (dashboard §9.3 `query`). */
+  query: string
   topMatchQuery: string | null
   similarity: number | null
   hit: boolean
   source: "exact" | "semantic" | null
+  /** True when this lookup ran on a degraded (exact-only) embedding provider. */
+  degraded: boolean
   embeddingProviderId: string
   createdAt: string
 }
@@ -100,13 +104,16 @@ export function createMemorySemanticCache(options: MemorySemanticCacheOptions = 
       const key = buildCacheKey(request, ctx)
       const queryText = queryTextOf(request)
       const scope = ctx.tenantScope ?? "default"
+      // Degraded = provider offers no trustworthy embedding, so this lookup can
+      // only serve exact matches (dashboard §9.3 degradedFallbacks segment).
+      const degraded = ctx.degraded === true
 
       // Step 1: exact layer.
       const exact = entries.get(key)
       if (exact && !isExpired(exact)) {
         touch(key, exact)
         notes.push("cache: exact hit")
-        await logLookup({ key, topMatchQuery: exact.queryText, similarity: null, hit: true, source: "exact", embeddingProviderId: ctx.embeddingProviderId, createdAt: new Date(now()).toISOString() })
+        await logLookup({ key, query: queryText, topMatchQuery: exact.queryText, similarity: null, hit: true, source: "exact", degraded, embeddingProviderId: ctx.embeddingProviderId, createdAt: new Date(now()).toISOString() })
         return { hit: true, source: "exact", entry: stripInternal(exact), notes }
       }
       if (exact && isExpired(exact)) entries.delete(key)
@@ -119,7 +126,7 @@ export function createMemorySemanticCache(options: MemorySemanticCacheOptions = 
             ? "cache: semantic disabled (no embedding provider), exact-match only — hit rate reduced"
             : "cache: semantic disabled, exact-match only — hit rate reduced",
         )
-        await logLookup({ key, topMatchQuery: null, similarity: null, hit: false, source: null, embeddingProviderId: ctx.embeddingProviderId, createdAt: new Date(now()).toISOString() })
+        await logLookup({ key, query: queryText, topMatchQuery: null, similarity: null, hit: false, source: null, degraded, embeddingProviderId: ctx.embeddingProviderId, createdAt: new Date(now()).toISOString() })
         return { hit: false, notes }
       }
       if (ctx.degraded && ctx.hashSemantic) {
@@ -143,16 +150,16 @@ export function createMemorySemanticCache(options: MemorySemanticCacheOptions = 
         // meaning-flipped match rather than serving a wrong cached answer.
         if (ctx.guard && !ctx.guard(queryText, best.entry.queryText)) {
           notes.push(`cache: semantic match rejected by guard sim=${best.similarity.toFixed(4)}`)
-          await logLookup({ key, topMatchQuery: best.entry.queryText, similarity: best.similarity, hit: false, source: null, embeddingProviderId: ctx.embeddingProviderId, createdAt: new Date(now()).toISOString() })
+          await logLookup({ key, query: queryText, topMatchQuery: best.entry.queryText, similarity: best.similarity, hit: false, source: null, degraded, embeddingProviderId: ctx.embeddingProviderId, createdAt: new Date(now()).toISOString() })
           return { hit: false, notes }
         }
         touch(best.entry.key, best.entry)
         notes.push(`cache: semantic hit sim=${best.similarity.toFixed(4)}`)
-        await logLookup({ key, topMatchQuery: best.entry.queryText, similarity: best.similarity, hit: true, source: "semantic", embeddingProviderId: ctx.embeddingProviderId, createdAt: new Date(now()).toISOString() })
+        await logLookup({ key, query: queryText, topMatchQuery: best.entry.queryText, similarity: best.similarity, hit: true, source: "semantic", degraded, embeddingProviderId: ctx.embeddingProviderId, createdAt: new Date(now()).toISOString() })
         return { hit: true, source: "semantic", similarity: best.similarity, entry: stripInternal(best.entry), notes }
       }
 
-      await logLookup({ key, topMatchQuery: best?.entry.queryText ?? null, similarity: best?.similarity ?? null, hit: false, source: null, embeddingProviderId: ctx.embeddingProviderId, createdAt: new Date(now()).toISOString() })
+      await logLookup({ key, query: queryText, topMatchQuery: best?.entry.queryText ?? null, similarity: best?.similarity ?? null, hit: false, source: null, degraded, embeddingProviderId: ctx.embeddingProviderId, createdAt: new Date(now()).toISOString() })
       return { hit: false, notes }
     },
 

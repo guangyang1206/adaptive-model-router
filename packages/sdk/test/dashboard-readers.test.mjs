@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import {
   createJsonlTraceStore,
   listEvalRuns,
+  getEvalsOverview,
   getLatestRegression,
   getEvalRun,
   getCacheStats,
@@ -96,6 +97,58 @@ test("getLatestRegression: compares latest vs baseline", async () => {
 })
 
 // ---------------------------------------------------------------------------
+// §9.1 getEvalsOverview (composite)
+// ---------------------------------------------------------------------------
+test("getEvalsOverview: empty store returns complete empty composite", async () => {
+  await withStore(async (store) => {
+    const overview = await getEvalsOverview(store)
+    assert.deepEqual(overview.runs, [])
+    assert.deepEqual(overview.sparklines, {})
+    assert.equal(overview.latestRegression, null)
+    assert.deepEqual(overview.latestPerCase, [])
+  })
+})
+
+test("getEvalsOverview: sparklines are createdAt-ASCENDING per canonical key", async () => {
+  await withStore(async (store) => {
+    // Write out of order; reader must sort runs desc but sparklines asc.
+    await store.writeEvalRun(evalRun({ runId: "r2", createdAt: "2026-07-02T00:00:00.000Z", metrics: { routingAccuracy: 0.7, top1ExpectMatch: 0.6 } }))
+    await store.writeEvalRun(evalRun({ runId: "r3", createdAt: "2026-07-03T00:00:00.000Z", metrics: { routingAccuracy: 0.8 } }))
+    await store.writeEvalRun(evalRun({ runId: "r1", createdAt: "2026-07-01T00:00:00.000Z", metrics: { routingAccuracy: 0.5, top1ExpectMatch: 0.4 } }))
+    const overview = await getEvalsOverview(store)
+    // runs: newest first.
+    assert.deepEqual(overview.runs.map((r) => r.runId), ["r3", "r2", "r1"])
+    // sparkline: oldest→newest (r1,r2,r3) using canonical key.
+    assert.deepEqual(overview.sparklines.routingAccuracy, [0.5, 0.7, 0.8])
+    // r3 lacks top1ExpectMatch → skipped, NOT back-filled with 0.
+    assert.deepEqual(overview.sparklines.top1ExpectMatch, [0.4, 0.6])
+  })
+})
+
+test("getEvalsOverview: latestPerCase folds expectedSatisfied to pass/fail/na", async () => {
+  await withStore(async (store) => {
+    await store.writeEvalRun(evalRun({ runId: "old", createdAt: "2026-07-01T00:00:00.000Z" }))
+    await store.writeEvalRun(evalRun({
+      runId: "latest",
+      createdAt: "2026-07-05T00:00:00.000Z",
+      perCase: [
+        { caseId: "pass1", chosenModel: "m", expectedSatisfied: { anyOf: true, maxCostUsd: true }, rankOfExpected: 0, skipped: false, fallbackTriggered: false },
+        { caseId: "fail1", chosenModel: "m", expectedSatisfied: { anyOf: true, maxCostUsd: false }, rankOfExpected: 1, skipped: false, fallbackTriggered: false },
+        { caseId: "na_empty", chosenModel: "m", expectedSatisfied: {}, rankOfExpected: undefined, skipped: false, fallbackTriggered: false },
+        { caseId: "na_skip", chosenModel: undefined, expectedSatisfied: { anyOf: true }, rankOfExpected: undefined, skipped: true, fallbackTriggered: false },
+      ],
+    }))
+    const overview = await getEvalsOverview(store)
+    assert.deepEqual(overview.latestPerCase, [
+      { id: "pass1", state: "pass" },
+      { id: "fail1", state: "fail" },
+      { id: "na_empty", state: "na" },
+      { id: "na_skip", state: "na" },
+    ])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // §9.2 getEvalRun
 // ---------------------------------------------------------------------------
 test("getEvalRun: null for unknown run", async () => {
@@ -153,9 +206,9 @@ test("getCacheStats: empty store returns complete zero state", async () => {
 
 test("getCacheStats: hits/misses/hitRate + semantic mode + log mapping", async () => {
   await withStore(async (store) => {
-    await store.writeCacheLookup({ key: "q1", topMatchQuery: "hello there", similarity: 0.97, hit: true, source: "semantic", embeddingProviderId: "openai:x", createdAt: "2026-07-03T09:01:00.000Z" })
-    await store.writeCacheLookup({ key: "q2", topMatchQuery: null, similarity: null, hit: false, source: null, embeddingProviderId: "openai:x", createdAt: "2026-07-03T09:02:00.000Z" })
-    await store.writeCacheLookup({ key: "q3", topMatchQuery: "q3", similarity: null, hit: true, source: "exact", embeddingProviderId: "openai:x", createdAt: "2026-07-03T09:03:00.000Z" })
+    await store.writeCacheLookup({ key: "k1", query: "how do I reset my password", topMatchQuery: "hello there", similarity: 0.97, hit: true, source: "semantic", degraded: false, embeddingProviderId: "openai:x", createdAt: "2026-07-03T09:01:00.000Z" })
+    await store.writeCacheLookup({ key: "k2", query: "totally novel question", topMatchQuery: null, similarity: null, hit: false, source: null, degraded: false, embeddingProviderId: "openai:x", createdAt: "2026-07-03T09:02:00.000Z" })
+    await store.writeCacheLookup({ key: "k3", query: "how do I reset my password", topMatchQuery: "how do I reset my password", similarity: null, hit: true, source: "exact", degraded: false, embeddingProviderId: "openai:x", createdAt: "2026-07-03T09:03:00.000Z" })
     const stats = await getCacheStats(store)
     assert.equal(stats.hits, 2)
     assert.equal(stats.misses, 1)
@@ -169,9 +222,25 @@ test("getCacheStats: hits/misses/hitRate + semantic mode + log mapping", async (
     assert.equal(row.result, "hit")
     assert.equal(row.source, "exact")
     assert.equal(row.ttlMs, null)
-    const missRow = stats.hitQualityLog.find((r) => r.query === "q2")
+    // Real query text is surfaced (NOT the internal cache key).
+    assert.equal(row.query, "how do I reset my password")
+    const missRow = stats.hitQualityLog.find((r) => r.query === "totally novel question")
     assert.equal(missRow.result, "miss")
     assert.equal(missRow.source, null)
+  })
+})
+
+test("getCacheStats: degraded lookups drive degradedFallbacks + degraded:exact mode", async () => {
+  await withStore(async (store) => {
+    await store.writeCacheLookup({ key: "k1", query: "q one", topMatchQuery: "q one", similarity: null, hit: true, source: "exact", degraded: true, embeddingProviderId: "hash:fallback", createdAt: "2026-07-03T09:01:00.000Z" })
+    await store.writeCacheLookup({ key: "k2", query: "q two", topMatchQuery: null, similarity: null, hit: false, source: null, degraded: true, embeddingProviderId: "hash:fallback", createdAt: "2026-07-03T09:02:00.000Z" })
+    await store.writeCacheLookup({ key: "k3", query: "q three", topMatchQuery: "q three", similarity: null, hit: true, source: "exact", degraded: false, embeddingProviderId: "openai:x", createdAt: "2026-07-03T09:03:00.000Z" })
+    const stats = await getCacheStats(store)
+    assert.equal(stats.donut.degradedFallbacks, 2)
+    // Any degraded lookup ⇒ degraded:exact mode takes precedence over exact.
+    assert.equal(stats.mode, "degraded:exact")
+    assert.equal(stats.hits, 2)
+    assert.equal(stats.misses, 1)
   })
 })
 
@@ -243,6 +312,10 @@ test("readers tolerate a store with no MVP-2 primitives", async () => {
   assert.deepEqual(await listEvalRuns(bare), [])
   assert.equal(await getLatestRegression(bare), null)
   assert.equal(await getEvalRun(bare, "x"), null)
+  const overview = await getEvalsOverview(bare)
+  assert.deepEqual(overview.runs, [])
+  assert.deepEqual(overview.sparklines, {})
+  assert.deepEqual(overview.latestPerCase, [])
   const cache = await getCacheStats(bare)
   assert.equal(cache.total, 0)
   const learning = await getLearningState(bare)
