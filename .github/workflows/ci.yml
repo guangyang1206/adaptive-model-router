@@ -43,23 +43,31 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install toolchain locally
-        run: npm install --no-save typescript@^5.6.0 eslint@^9.13.0 typescript-eslint@^8.10.0 @eslint/js@^9.13.0
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      # Frozen install: validates the committed lockfile is complete/reproducible
+      # (would have caught the MVP-2 lockfile-pollution class of bug) AND creates
+      # the pnpm workspace symlinks (packages/*/node_modules/@adaptive-router/sdk)
+      # so the cross-package `@adaptive-router/sdk` imports resolve during build.
+      # The lint + type toolchain (typescript, eslint, typescript-eslint,
+      # @eslint/js) is declared in the root devDependencies, so this single
+      # install provides everything CI needs — no ad-hoc `npm install`.
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: npx eslint "packages/**/*.ts"
+        run: pnpm lint
 
       - name: Typecheck
-        run: npx tsc -p tsconfig.typecheck.json
+        run: pnpm typecheck
 
-      - name: Build SDK
-        run: npx tsc -p packages/sdk/tsconfig.json
-
-      - name: Build Dashboard
-        run: npx tsc -p packages/dashboard/tsconfig.json
-
-      - name: Build CLI
-        run: npx tsc -p packages/cli/tsconfig.json
+      # `pnpm -r build` builds packages in topological (dependency) order, so the
+      # SDK is built before the dashboard/cli that import it.
+      - name: Build
+        run: pnpm -r build
 
       # `node --test` with no path argument auto-discovers test/*.test.mjs from
       # the working directory. This is the one form that works on both Node 20

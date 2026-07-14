@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import process from "node:process"
 import { redactValue } from "./redact.js"
+import { runEvalCommand, runEvalBaselineCommand, type EvalCliDeps } from "./eval.js"
 
 type Config = {
   schemaVersion: "1.0"
@@ -26,7 +27,7 @@ type JsonlEvent = {
   request_id?: string
   decision_id?: string
   timestamp?: string
-  payload?: TracePayload
+  payload?: TracePayload | Record<string, unknown>
 }
 
 type TracePayload = {
@@ -61,15 +62,31 @@ const defaultConfig: Config = {
 const command = process.argv[2] ?? "help"
 const args = process.argv.slice(3)
 
-try {
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error))
+  process.exitCode = 1
+})
+
+async function main(): Promise<void> {
   if (command === "init") runInit(args)
   else if (command === "doctor") runDoctor(args)
   else if (command === "inspect") runInspect(args)
   else if (command === "export") runExport(args)
+  else if (command === "eval") await runEvalCommand(args[0]?.startsWith("--") ? undefined : args[0], evalDeps(args))
+  else if (command === "eval:baseline") await runEvalBaselineCommand(args[0], args[1], evalDeps(args))
   else runHelp(command !== "help" ? `Unknown command: ${command}` : undefined)
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error))
-  process.exitCode = 1
+}
+
+function evalDeps(argv: string[]): EvalCliDeps {
+  const cwd = getCwd(argv)
+  const config = readConfig(cwd)
+  return {
+    cwd,
+    sqlitePath: config.storage.sqlitePath,
+    jsonlFallbackPath: config.storage.jsonlFallbackPath,
+    getArg: (name: string) => getArg(argv, name),
+    hasFlag: (name: string) => argv.includes(name),
+  }
 }
 
 function runInit(args: string[]): void {
@@ -125,7 +142,10 @@ function runInspect(args: string[]): void {
   const cwd = getCwd(args)
   const config = readConfig(cwd)
   const events = readJsonlEvents(resolve(cwd, config.storage.jsonlFallbackPath))
-  const traces = events.map((event) => event.payload).filter((payload): payload is TracePayload => Boolean(payload))
+  const traces = events
+    .filter((event) => event.event_type === undefined || event.event_type === "request_finished")
+    .map((event) => event.payload)
+    .filter((payload): payload is TracePayload => Boolean(payload))
   const total = traces.length
   const fallback = traces.filter((trace) => trace.status === "fallback_success" || trace.attempts?.some((attempt) => attempt.status === "failed")).length
   const failed = traces.filter((trace) => trace.status === "failed").length
@@ -135,6 +155,15 @@ function runInspect(args: string[]): void {
   console.log(`Fallbacks: ${fallback}`)
   console.log(`Failed: ${failed}`)
   console.log(`Estimated cost: $${cost.toFixed(6)}`)
+
+  // MVP-2: cache hit statistics from cache_lookup events (present only when a
+  // semantic cache was configured; absent otherwise, so this stays silent).
+  const lookups = events.filter((event) => event.event_type === "cache_lookup")
+  if (lookups.length > 0) {
+    const hits = lookups.filter((event) => (event.payload as { hit?: boolean } | undefined)?.hit).length
+    const rate = Math.round((hits / lookups.length) * 100)
+    console.log(`Cache lookups: ${lookups.length} (hits ${hits}, hit rate ${rate}%)`)
+  }
 
   for (const trace of traces.slice(-10).reverse()) {
     console.log(`- ${trace.traceId ?? "unknown"} ${trace.status ?? "unknown"} ${trace.chosenModel ?? "n/a"} ${trace.reason ?? ""}`)
@@ -165,6 +194,8 @@ Usage:
   adaptive-router doctor [--cwd <path>]
   adaptive-router inspect [--cwd <path>]
   adaptive-router export [--cwd <path>] [--out <path>]
+  adaptive-router eval <dataset.json> [--baseline] [--threshold key=val,...] [--cwd <path>]
+  adaptive-router eval:baseline save <dataset.json> [--cwd <path>]
 `)
   if (error) process.exitCode = 1
 }

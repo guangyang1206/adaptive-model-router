@@ -6,7 +6,15 @@
     "noEmit": true,
     "declaration": false,
     "declarationMap": false,
-    "sourceMap": false
+    "sourceMap": false,
+    // Resolve the cross-package workspace import to SDK *source* so this gate is
+    // self-contained and build-order independent. Without this, typecheck runs
+    // before `Build SDK` in CI and can't find dist/index.d.ts (the symlinked
+    // package resolves via its `types` field, which only exists post-build).
+    // (paths resolve relative to this file in TS 5.x; no baseUrl needed.)
+    "paths": {
+      "@adaptive-router/sdk": ["./packages/sdk/src/index.ts"]
+    }
   },
   "include": ["packages/*/src/**/*.ts"]
 }

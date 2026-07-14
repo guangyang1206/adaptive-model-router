@@ -16,7 +16,9 @@
     "test": "node --test",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@adaptive-router/sdk": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.6.0"
   }
