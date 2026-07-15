@@ -1,9 +1,9 @@
 # Dashboard 设计说明
 
-MVP-0 Dashboard 仅包含两个页面：
+Dashboard 只读，面向开发者：
 
-- Requests / Routing Decisions
-- Models
+- Requests / Routing Decisions（支持服务端过滤）
+- Models（支持模型对比）
 
 设计规则：
 

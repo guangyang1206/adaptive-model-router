@@ -50,13 +50,19 @@ await wrapped.chat?.completions?.create({
 
 ## Provider factories
 
-MVP-0 includes four provider adapter factories:
+The SDK ships seven provider adapter factories:
 
 ```ts
+// OpenAI-compatible family
 createOpenAIProvider({ apiKey, baseURL?, models?, timeoutMs? })
-createAnthropicProvider({ apiKey, baseURL?, models?, timeoutMs? })
 createDeepSeekProvider({ apiKey, baseURL?, models?, timeoutMs? })
-createOllamaProvider({ baseURL?, models?, timeoutMs? })
+createQwenProvider({ apiKey, baseURL?, models?, timeoutMs? })   // DashScope OpenAI-compatible mode
+createVLLMProvider({ baseURL, apiKey?, models?, timeoutMs? })   // self-hosted; optional auth, zero-cost profile
+
+// Native-protocol adapters
+createAnthropicProvider({ apiKey, baseURL?, models?, timeoutMs? })
+createGeminiProvider({ apiKey, baseURL?, models?, timeoutMs? }) // native generateContent, header auth, tool mapping
+createOllamaProvider({ baseURL?, models?, timeoutMs? })         // local, zero-cost
 ```
 
 Default base URLs:
@@ -64,7 +70,30 @@ Default base URLs:
 - OpenAI: `https://api.openai.com/v1`
 - Anthropic: `https://api.anthropic.com/v1`
 - DeepSeek: `https://api.deepseek.com/v1`
+- Qwen (DashScope): `https://dashscope.aliyun.com/compatible-mode/v1`
+- Gemini: `https://generativelanguage.googleapis.com/v1beta`
+- vLLM: none (you must pass `baseURL`)
 - Ollama: `http://localhost:11434`
+
+Tool-calling is advertised only where it is actually implemented: Gemini maps
+tools to `functionDeclarations`; Anthropic does not advertise tool-calling until
+its tool schema is mapped (honest degradation).
+
+## Framework adapters
+
+Dependency-free adapters that let existing ecosystems route through the router:
+
+```ts
+// LangChain / LangGraph — returns a chat-model-shaped object
+const model = createLangChainModel(router, { route: { task: 'plan', quality: 'high' } })
+
+// Vercel AI SDK — returns a LanguageModelV1 implementation
+const vercel = createVercelModel(router, { route: { task: 'code' } })
+```
+
+Both are pure shims — they add **no runtime dependencies** to your project or to
+the SDK. Message normalization helpers (`normalizeLangChainMessages`,
+`normalizeVercelPrompt`) are exported for advanced use.
 
 ## `router.dashboard(options)`
 
@@ -103,6 +132,82 @@ const sqliteStore = await createSQLiteTraceStore({
 ```
 
 `createSQLiteTraceStore()` uses Node's built-in `node:sqlite` when available. If SQLite is unavailable and `fallbackPath` is provided, it falls back to JSONL.
+
+> Note: the SQLite store currently omits the `cache_lookup` and `weights_change`
+> event streams; the JSONL store retains the full log. Tracked as a known
+> follow-up.
+
+## Evaluation harness (MVP-2)
+
+Offline, cost-guarded evaluation. The runner **never issues real network calls** —
+cases with unknown cost surface an explanatory note rather than guessing.
+
+```ts
+import { loadDataset, runEval, compareToBaseline, gateAgainstBaseline } from '@adaptive-router/sdk'
+
+const dataset = await loadDataset('./evals/routing.json') // path or EvalCase[]
+const result = await runEval(dataset, { router /* , judge? */ })
+
+// Regression gating against a stored baseline
+const report = compareToBaseline(result, baseline)
+const gate = gateAgainstBaseline(result, baseline) // pass/fail + reasons
+```
+
+- `loadDataset(input)` — load from a JSON file path or an in-memory `EvalCase[]`.
+- `validateCase(c)` — returns a list of validation problems (empty = valid).
+- `runEval(dataset, options)` — runs each case through routing/scoring.
+- `compareToBaseline` / `gateAgainstBaseline` / `formatRegressionReport` — an absent
+  baseline passes with a note rather than failing the run.
+- Judge plugins implement the `JudgePlugin` type (LLM judge or human feedback).
+
+## Semantic cache (MVP-2)
+
+Embedding-based lookup with honest degradation — if no embedder is wired, the
+cache downgrades and records why instead of throwing.
+
+```ts
+import { createMemorySemanticCache, DEFAULT_CACHE_THRESHOLD } from '@adaptive-router/sdk'
+
+const cache = createMemorySemanticCache({
+  embedder,                          // optional; without it the cache degrades honestly
+  threshold: DEFAULT_CACHE_THRESHOLD, // 0.95 (0.98 for very short queries)
+  capacity: 1000,
+})
+```
+
+Helpers: `buildCacheKey`, `queryTextOf`, `sha256`, and the `CACHE_TTL_CLASSES`
+constants (`default` / `factual` / `volatile`).
+
+## Embeddings (MVP-2)
+
+```ts
+import { createHashingEmbeddingProvider, createOpenAIEmbeddingProvider, cosineSimilarity } from '@adaptive-router/sdk'
+
+const local = createHashingEmbeddingProvider(256)          // deterministic, offline
+const remote = createOpenAIEmbeddingProvider({ apiKey })   // when a real embedder is desired
+```
+
+Also exported: `normalizeForEmbed`, `l2normalize`, `fnv1a`.
+
+## Route outcome learning (MVP-2)
+
+Learning is **human-in-the-loop**. `proposeWeights()` returns a *candidate* with
+`adopted: false` hard-coded — a human must call the registry's `adopt()` to enable
+new weights. Weight values are clamped to `WEIGHT_BOUNDS`, and a regression gate
+blocks proposals that would worsen the baseline.
+
+```ts
+import { proposeWeights, createWeightsRegistry, BUILTIN_WEIGHTS } from '@adaptive-router/sdk'
+
+const registry = createWeightsRegistry(BUILTIN_WEIGHTS)
+const { candidate, report, adopted, notes } = await proposeWeights({ /* samples, baseline, ... */ })
+// adopted === false always — nothing changes until you opt in:
+if (looksGood) registry.adopt(candidate.version)
+// registry.rollback(version) / registry.activeVersion() / registry.get(version)
+```
+
+Helpers: `computeReward`, `diffWeights`, `flattenWeights`, `unflattenWeights`,
+`WEIGHT_ORDER`, `WEIGHT_BOUNDS`, `DEFAULT_REWARD_WEIGHTS`.
 
 ## Error codes
 

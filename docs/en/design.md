@@ -1,9 +1,9 @@
 # Dashboard Design Notes
 
-MVP-0 dashboard has two pages only:
+The dashboard is read-only and developer-facing:
 
-- Requests / Routing Decisions
-- Models
+- Requests / Routing Decisions (with server-side filtering)
+- Models (with model comparison)
 
 Design rules:
 
