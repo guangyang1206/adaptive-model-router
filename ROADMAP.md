@@ -1,7 +1,7 @@
 # Roadmap
 
 > Status legend: ✅ done · 🔵 in progress · ⬜ planned
-> Last updated: 2026-06-30 · Current focus: **MVP-1 — provider & framework expansion**
+> Last updated: 2026-07-14 · Current focus: **MVP-3 — team / enterprise / SaaS control plane** (MVP-2 shipped)
 
 This roadmap reflects *actual* progress, not just intent. For the day-to-day
 development workflow and quality gates behind each shipped item, see
@@ -36,10 +36,10 @@ decisions, and explain them in a local dashboard. **Functionally complete.**
 
 ---
 
-## MVP-1 — Framework and Provider Expansion 🔵
+## MVP-1 — Framework and Provider Expansion ✅
 
 Goal: make the router usable from the ecosystems contributors already live in,
-and broaden provider coverage. **In progress.**
+and broaden provider coverage. **Shipped.**
 
 - ✅ Gemini adapter (native `generateContent`, header auth, tool mapping)
 - ✅ Qwen adapter (DashScope OpenAI-compatible mode)
@@ -47,26 +47,27 @@ and broaden provider coverage. **In progress.**
 - ✅ LangChain / LangGraph adapter (dependency-free `createLangChainModel`)
 - ✅ Vercel AI SDK adapter (dependency-free `createVercelModel`, `LanguageModelV1`)
 - ✅ Dashboard filtering and model comparison (server-side request filter + `/api/models/compare`)
-- ⬜ Policy dry-run UI
-- ⬜ Local Proxy / HTTP Bridge
+- ⬜ Policy dry-run UI — *deferred to MVP-3+*
+- ⬜ Local Proxy / HTTP Bridge — *deferred to MVP-3+*
 
 ---
 
-## MVP-2 — Evaluation and Optimization ⬜
+## MVP-2 — Evaluation and Optimization ✅
 
 Goal: move from "routes correctly" to "routes *well*", with feedback loops.
+**Shipped** (except the two items noted below, deferred to MVP-3+).
 
-- ⬜ Eval harness
-- ⬜ User-defined eval sets
-- ⬜ LLM judge / human feedback interface
-- ⬜ Route outcome learning
-- ⬜ Semantic cache
-- ⬜ Prompt / context compression
-- ⬜ Helicone / Langfuse exporter
+- ✅ Eval harness (offline, cost-guarded — never issues real network calls)
+- ✅ User-defined eval sets (JSON case files + baseline snapshots)
+- ✅ LLM judge / human feedback interface (pluggable judge hook, human-in-the-loop)
+- ✅ Route outcome learning (bounded weight suggestions, `adopted: false` by default, regression-gated)
+- ✅ Semantic cache (embedding-based, honest degradation when no embedder wired)
+- ⬜ Prompt / context compression — *deferred to MVP-3+*
+- ⬜ Helicone / Langfuse exporter — *deferred to MVP-3+*
 
 ---
 
-## MVP-3 — Team / Enterprise / SaaS ⬜
+## MVP-3 — Team / Enterprise / SaaS ⬜ (Next)
 
 Goal: multi-user, multi-project control plane for teams.
 

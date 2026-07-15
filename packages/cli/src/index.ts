@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import process from "node:process"
 import { redactValue } from "./redact.js"
 import { runEvalCommand, runEvalBaselineCommand, type EvalCliDeps } from "./eval.js"
@@ -59,7 +60,16 @@ const defaultConfig: Config = {
   },
 }
 
-const command = process.argv[2] ?? "help"
+// Treat the conventional help/version flags as their command equivalents so
+// `adaptive-router --help` / `-h` / `--version` / `-v` behave like a first-class
+// command instead of falling through to the "Unknown command" error path.
+const rawCommand = process.argv[2] ?? "help"
+const command =
+  rawCommand === "--help" || rawCommand === "-h"
+    ? "help"
+    : rawCommand === "--version" || rawCommand === "-v" || rawCommand === "version"
+      ? "version"
+      : rawCommand
 const args = process.argv.slice(3)
 
 main().catch((error) => {
@@ -72,9 +82,11 @@ async function main(): Promise<void> {
   else if (command === "doctor") runDoctor(args)
   else if (command === "inspect") runInspect(args)
   else if (command === "export") runExport(args)
+  else if (command === "version") runVersion()
   else if (command === "eval") await runEvalCommand(args[0]?.startsWith("--") ? undefined : args[0], evalDeps(args))
   else if (command === "eval:baseline") await runEvalBaselineCommand(args[0], args[1], evalDeps(args))
-  else runHelp(command !== "help" ? `Unknown command: ${command}` : undefined)
+  else if (command === "help") runHelp()
+  else runHelp(`Unknown command: ${command}`)
 }
 
 function evalDeps(argv: string[]): EvalCliDeps {
@@ -196,8 +208,23 @@ Usage:
   adaptive-router export [--cwd <path>] [--out <path>]
   adaptive-router eval <dataset.json> [--baseline] [--threshold key=val,...] [--cwd <path>]
   adaptive-router eval:baseline save <dataset.json> [--cwd <path>]
+  adaptive-router version
+  adaptive-router help
 `)
   if (error) process.exitCode = 1
+}
+
+// Prints the CLI package version. Resolved from the package.json shipped next to
+// the compiled entrypoint so it stays correct regardless of the install path.
+function runVersion(): void {
+  let version = "0.0.0"
+  try {
+    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json")
+    version = (JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string }).version ?? version
+  } catch {
+    // Fall back to the placeholder; never fail `version`.
+  }
+  console.log(`adaptive-router ${version}`)
 }
 
 function readConfig(cwd: string): Config {

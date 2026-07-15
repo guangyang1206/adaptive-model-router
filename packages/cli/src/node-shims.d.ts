@@ -21,3 +21,11 @@ declare module "node:process" {
   }
   export default process
 }
+
+declare module "node:url" {
+  export function fileURLToPath(url: string | URL): string
+}
+
+interface ImportMeta {
+  url: string
+}
