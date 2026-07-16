@@ -1,9 +1,14 @@
 // Better-Auth instance (Spec §3): email + password, GitHub OAuth (optional),
 // and the `organization` plugin (owns organization/member/invitation tables).
 //
-// The database is wired via postgres.js — Better-Auth accepts a `postgres`
-// (Sql) instance through its Kysely/dialect-free adapter option. We pass our
-// existing pooled client so there is ONE connection pool for the whole service.
+// DB wiring: Better-Auth 1.6's Kysely adapter detects Postgres via
+// `"connect" in db` and wraps the value as `new PostgresDialect({ pool: db })`,
+// i.e. it requires a node-postgres `pg.Pool`. A bare postgres.js `Sql` client
+// has no `.connect`, so passing it makes Better-Auth fall through its driver
+// detection and crash with `NOT_TAGGED_CALL` on the first auth query (caught by
+// the real-Postgres CI round-trip). So we give Better-Auth a dedicated pg.Pool
+// (via getPgPool) — while EVERY one of our own queries still runs through
+// postgres.js. Both pools share the same DATABASE_URL.
 //
 // This is the ONLY place better-auth is constructed. The emitted SQL schema is
 // committed as 0001_better_auth.sql and applied by OUR migration runner, so we
@@ -12,6 +17,7 @@
 import { betterAuth } from "better-auth"
 import { organization } from "better-auth/plugins"
 import type { Sql } from "../db/client.js"
+import { getPgPool } from "../db/client.js"
 import type { ControlPlaneConfig } from "../config.js"
 
 /**
@@ -25,15 +31,17 @@ import type { ControlPlaneConfig } from "../config.js"
 export type Auth = ReturnType<typeof createAuth>
 
 /**
- * Build the Better-Auth instance from config + the shared postgres.js client.
- * GitHub social login is enabled only when both client id + secret are present
- * (Spec: GitHub OAuth optional; email/password is the always-on baseline).
+ * Build the Better-Auth instance from config. Better-Auth is backed by a
+ * node-postgres Pool (see file header for why postgres.js can't be used here);
+ * the `sql` param is retained for signature stability / future use but auth
+ * itself no longer reads it. GitHub social login is enabled only when both
+ * client id + secret are present (Spec: GitHub OAuth optional; email/password
+ * is the always-on baseline).
  */
-export function createAuth(sql: Sql, config: ControlPlaneConfig) {
+export function createAuth(_sql: Sql, config: ControlPlaneConfig) {
   return betterAuth({
-    // Pass the pooled postgres.js instance directly; Better-Auth's built-in
-    // adapter understands a `postgres` Sql client.
-    database: sql,
+    // node-postgres Pool — Better-Auth wraps it as PostgresDialect({ pool }).
+    database: getPgPool(config.databaseUrl),
     secret: config.authSecret,
     baseURL: config.baseUrl,
     basePath: config.authBasePath,

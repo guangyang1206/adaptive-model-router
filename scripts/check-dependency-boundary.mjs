@@ -6,7 +6,9 @@
 //   2. @adaptive-router/dashboard  -> deps ⊆ { @adaptive-router/sdk }
 //   3. @adaptive-router/cli        -> deps ⊆ { @adaptive-router/sdk }
 //   4. @adaptive-router/control-plane -> deps ⊆
-//        { @adaptive-router/sdk, @adaptive-router/dashboard, better-auth, postgres }
+//        { @adaptive-router/sdk, @adaptive-router/dashboard, better-auth, postgres, pg }
+//        (pg backs the Better-Auth Kysely PostgresDialect, which needs a
+//         node-postgres Pool; postgres.js still backs every one of OUR queries.)
 //   5. All workspace deps pinned to "workspace:*".
 //
 // Exit non-zero (red build) on any violation. No dependencies of its own.
@@ -42,7 +44,7 @@ for (const [name, allow] of Object.entries(wsOnly)) {
 }
 
 // 4. control-plane: the ONLY package allowed cloud deps, from a fixed allowlist.
-const cpAllow = ["@adaptive-router/sdk", "@adaptive-router/dashboard", "better-auth", "postgres"]
+const cpAllow = ["@adaptive-router/sdk", "@adaptive-router/dashboard", "better-auth", "postgres", "pg"]
 const cp = read("../packages/control-plane/package.json")
 const cpExtra = deps(cp).filter((d) => !cpAllow.includes(d))
 if (cpExtra.length) fail(`control-plane deps not in allowlist: ${cpExtra.join(", ")}`)

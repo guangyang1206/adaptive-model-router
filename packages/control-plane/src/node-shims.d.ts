@@ -64,3 +64,36 @@ declare const process: {
 interface ImportMeta {
   url: string
 }
+
+// node-postgres (`pg`) minimal shim. pg does NOT ship its own types (they live
+// in @types/pg), and we avoid @types/* per the hand-shim convention. We only
+// construct a Pool and end() it; Better-Auth consumes the Pool internally via
+// `.connect()`/`.query()` (its own detection checks `"connect" in db`), so we
+// declare enough of the node-postgres Pool surface for that handoff to typecheck.
+declare module "pg" {
+  export type PoolConfig = {
+    connectionString?: string
+    max?: number
+    host?: string
+    port?: number
+    user?: string
+    password?: string
+    database?: string
+    ssl?: boolean | Record<string, unknown>
+  }
+  export type QueryResult<R = Record<string, unknown>> = {
+    rows: R[]
+    rowCount: number
+  }
+  export type PoolClient = {
+    query(text: string, values?: unknown[]): Promise<QueryResult>
+    release(err?: boolean | Error): void
+  }
+  export class Pool {
+    constructor(config?: PoolConfig)
+    connect(): Promise<PoolClient>
+    query(text: string, values?: unknown[]): Promise<QueryResult>
+    end(): Promise<void>
+    on(event: string, listener: (...args: unknown[]) => void): this
+  }
+}

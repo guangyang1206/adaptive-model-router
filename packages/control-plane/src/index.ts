@@ -8,7 +8,7 @@ import { buildConfig, type ControlPlaneConfig } from "./config.js"
 export type { ControlPlaneConfig, ControlPlaneServer }
 export { buildConfig, bootstrap, createRequestHandler }
 export { loadEnv, MissingEnvError, type RawEnv } from "./env.js"
-export { getSql, closeSql, type Sql } from "./db/client.js"
+export { getSql, getPgPool, closeSql, type Sql } from "./db/client.js"
 export { runMigrations, migrationStatus } from "./db/migrate.js"
 export { createAuth, type Auth } from "./auth/better-auth.js"
 export { resolveScope, type Scope } from "./auth/scope.js"
