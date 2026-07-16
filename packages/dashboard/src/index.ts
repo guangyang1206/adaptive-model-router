@@ -364,6 +364,69 @@ export async function createDashboard(options: DashboardOptions = {}): Promise<R
   }
 }
 
+/**
+ * Result of {@link dispatchApiRequest}: either a resolved API response with an
+ * HTTP status + `data` payload (the caller wraps it in the envelope), or `null`
+ * when the path is not one of the 12 read-only `/api/*` routes.
+ *
+ * Ruling 4: exported so the control-plane can reuse this exact dispatch table
+ * for its per-project dashboard proxy WITHOUT re-implementing route matching or
+ * drifting from the dashboard's behavior. This is a pure function of
+ * (pathname, searchParams, data) — no I/O, no ServerResponse coupling — so both
+ * the dashboard's own `handleRequest` (below) and the control-plane call it and
+ * stay byte-for-byte consistent.
+ */
+export type DashboardApiResult = { status: number; data: unknown } | null
+
+/**
+ * Pure `/api/*` dispatcher (Ruling 4). Returns the resolved payload + status for
+ * a read-only dashboard API path, or `null` for anything that is not one of the
+ * 12 API routes (favicon, HTML pages, unknown paths). Logic-preserving extract
+ * of the original inline route table so `handleRequest` and the control-plane
+ * proxy share one source of truth.
+ */
+export async function dispatchApiRequest(
+  pathname: string,
+  searchParams: URLSearchParams,
+  data: DashboardDataAccess,
+): Promise<DashboardApiResult> {
+  if (pathname === "/api/metrics/summary") return { status: 200, data: await data.getSummary() }
+  if (pathname === "/api/requests") return { status: 200, data: await data.listRequests(parseRequestFilterFrom(searchParams)) }
+  if (pathname.startsWith("/api/requests/")) {
+    const detail = await data.getRequest(decodeURIComponent(pathname.replace("/api/requests/", "")))
+    return detail ? { status: 200, data: detail } : { status: 404, data: { error: "not found" } }
+  }
+  if (pathname === "/api/models/compare") {
+    const ids = (searchParams.get("ids") ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean)
+    return { status: 200, data: await data.compareModels(ids) }
+  }
+  if (pathname === "/api/models") return { status: 200, data: await data.listModels() }
+  if (pathname.startsWith("/api/models/") && pathname.endsWith("/health")) {
+    const modelId = decodeURIComponent(pathname.replace("/api/models/", "").replace("/health", ""))
+    const model = (await data.listModels()).find((entry) => entry.modelId === modelId)
+    return model
+      ? { status: 200, data: { modelId, health: model.health, latencyP50Ms: model.latencyP50Ms } }
+      : { status: 404, data: { error: "not found" } }
+  }
+  if (pathname.startsWith("/api/routing-decisions/")) {
+    const detail = await data.getRoutingDecision?.(decodeURIComponent(pathname.replace("/api/routing-decisions/", "")))
+    return detail ? { status: 200, data: detail } : { status: 404, data: { error: "not found" } }
+  }
+  // MVP-2 read-only API (detailed-design §9). :runId branch must precede the
+  // bare /api/evals branch so it isn't shadowed.
+  if (pathname.startsWith("/api/evals/")) {
+    const detail = await data.getEvalRunDetail(decodeURIComponent(pathname.replace("/api/evals/", "")))
+    return detail ? { status: 200, data: detail } : { status: 404, data: { error: "not found" } }
+  }
+  if (pathname === "/api/evals") return { status: 200, data: await data.getEvalsOverview() }
+  if (pathname === "/api/cache") return { status: 200, data: await data.getCacheOverview() }
+  if (pathname === "/api/learning") return { status: 200, data: await data.getLearningOverview() }
+  return null
+}
+
 async function handleRequest(request: IncomingMessage, response: ServerResponse, data: DashboardDataAccess): Promise<void> {
   const url = new URL(request.url ?? "/", "http://localhost")
 
@@ -373,38 +436,8 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       response.end()
       return
     }
-    if (url.pathname === "/api/metrics/summary") return sendJson(response, await data.getSummary())
-    if (url.pathname === "/api/requests") return sendJson(response, await data.listRequests(parseRequestFilter(url)))
-    if (url.pathname.startsWith("/api/requests/")) {
-      const detail = await data.getRequest(decodeURIComponent(url.pathname.replace("/api/requests/", "")))
-      return detail ? sendJson(response, detail) : sendJson(response, { error: "not found" }, 404)
-    }
-    if (url.pathname === "/api/models/compare") {
-      const ids = (url.searchParams.get("ids") ?? "")
-        .split(",")
-        .map((id) => id.trim())
-        .filter(Boolean)
-      return sendJson(response, await data.compareModels(ids))
-    }
-    if (url.pathname === "/api/models") return sendJson(response, await data.listModels())
-    if (url.pathname.startsWith("/api/models/") && url.pathname.endsWith("/health")) {
-      const modelId = decodeURIComponent(url.pathname.replace("/api/models/", "").replace("/health", ""))
-      const model = (await data.listModels()).find((entry) => entry.modelId === modelId)
-      return model ? sendJson(response, { modelId, health: model.health, latencyP50Ms: model.latencyP50Ms }) : sendJson(response, { error: "not found" }, 404)
-    }
-    if (url.pathname.startsWith("/api/routing-decisions/")) {
-      const detail = await data.getRoutingDecision?.(decodeURIComponent(url.pathname.replace("/api/routing-decisions/", "")))
-      return detail ? sendJson(response, detail) : sendJson(response, { error: "not found" }, 404)
-    }
-    // MVP-2 read-only API (detailed-design §9). :runId branch must precede the
-    // bare /api/evals branch so it isn't shadowed.
-    if (url.pathname.startsWith("/api/evals/")) {
-      const detail = await data.getEvalRunDetail(decodeURIComponent(url.pathname.replace("/api/evals/", "")))
-      return detail ? sendJson(response, detail) : sendJson(response, { error: "not found" }, 404)
-    }
-    if (url.pathname === "/api/evals") return sendJson(response, await data.getEvalsOverview())
-    if (url.pathname === "/api/cache") return sendJson(response, await data.getCacheOverview())
-    if (url.pathname === "/api/learning") return sendJson(response, await data.getLearningOverview())
+    const apiResult = await dispatchApiRequest(url.pathname, url.searchParams, data)
+    if (apiResult) return sendJson(response, apiResult.data, apiResult.status)
     const pageMap: Record<string, Page> = {
       "/": "requests",
       "/requests": "requests",
@@ -430,17 +463,18 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
 /**
  * Translate the `/api/requests` query string into a {@link RequestFilter}.
  * `status` is validated against the known set; anything else is ignored so a
- * stray value can never 500 the endpoint.
+ * stray value can never 500 the endpoint. Accepts `URLSearchParams` directly so
+ * both `handleRequest` and the exported {@link dispatchApiRequest} share it.
  */
-function parseRequestFilter(url: URL): RequestFilter {
+function parseRequestFilterFrom(searchParams: URLSearchParams): RequestFilter {
   const filter: RequestFilter = {}
-  const status = url.searchParams.get("status")
+  const status = searchParams.get("status")
   if (status === "success" || status === "failed" || status === "fallback_success") filter.status = status
-  const model = url.searchParams.get("model")
+  const model = searchParams.get("model")
   if (model) filter.model = model
-  const search = url.searchParams.get("search") ?? url.searchParams.get("q")
+  const search = searchParams.get("search") ?? searchParams.get("q")
   if (search) filter.search = search
-  const limit = Number(url.searchParams.get("limit"))
+  const limit = Number(searchParams.get("limit"))
   if (Number.isFinite(limit) && limit > 0) filter.limit = limit
   return filter
 }
