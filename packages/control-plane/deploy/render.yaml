@@ -1,0 +1,38 @@
+# Render blueprint (https://render.com/docs/blueprint-spec). One web service +
+# a free managed Postgres. `render.yaml` lets an operator deploy with a single
+# "New > Blueprint" pointing at this repo. BETTER_AUTH_SECRET is auto-generated;
+# BETTER_AUTH_URL should be set to the service's public URL after first deploy.
+
+services:
+  - type: web
+    name: adaptive-control-plane
+    runtime: docker
+    dockerfilePath: packages/control-plane/deploy/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: adaptive-control-plane-db
+          property: connectionString
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      - key: BETTER_AUTH_URL
+        sync: false # set to the service's https URL after the first deploy
+      - key: PORT
+        value: "3000"
+      - key: HOST
+        value: 0.0.0.0
+      - key: REGISTRATION_OPEN
+        value: "true"
+      # Optional GitHub OAuth — set in the dashboard if used:
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+
+databases:
+  - name: adaptive-control-plane-db
+    plan: free
+    postgresMajorVersion: "17"
