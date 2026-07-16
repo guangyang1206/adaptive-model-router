@@ -13,7 +13,8 @@
     // package resolves via its `types` field, which only exists post-build).
     // (paths resolve relative to this file in TS 5.x; no baseUrl needed.)
     "paths": {
-      "@adaptive-router/sdk": ["./packages/sdk/src/index.ts"]
+      "@adaptive-router/sdk": ["./packages/sdk/src/index.ts"],
+      "@adaptive-router/dashboard": ["./packages/dashboard/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts"]
