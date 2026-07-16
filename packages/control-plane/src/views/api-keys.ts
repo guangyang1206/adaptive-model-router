@@ -11,7 +11,7 @@
 
 import { esc, escAttr, badge, stateBlock, button, copyButton, ingestSnippet } from "./layout.js"
 import { icon } from "./icons.js"
-import { settingsTabs } from "./settings-general.js"
+import { settingsTabs } from "./settings-tabs.js"
 import type { ApiKeysPageData, TokenRow } from "./contract.js"
 
 /** One-time plaintext reveal banner (create-once). */

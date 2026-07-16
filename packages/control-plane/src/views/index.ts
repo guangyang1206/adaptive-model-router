@@ -46,8 +46,6 @@ export { CONTROL_PLANE_CSS } from "./styles.js"
 export { esc as escapeHtml, escAttr } from "./layout.js"
 export { icon } from "./icons.js"
 
-// --- EXTRA (proposed contract addition, not yet in contract.ts) ------------
-// A Settings › General / danger-zone body fragment matching the shell-body
-// convention. Left available for the backend to wire GET /settings through
-// renderAppShellHtml. See settings-general.ts header + team-lead note.
-export { renderSettingsGeneralBody, settingsTabs, type SettingsGeneralData, type SettingsTab } from "./settings-general.js"
+// --- Settings sub-nav helper (presentational, in-scope; not a contract seam) --
+// Shared Members ↔ API Keys tab strip used by the two Settings page bodies.
+export { settingsTabs, type SettingsTab } from "./settings-tabs.js"

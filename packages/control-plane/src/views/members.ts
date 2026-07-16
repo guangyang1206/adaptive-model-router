@@ -14,7 +14,7 @@
 
 import { esc, escAttr, badge, avatar, stateBlock, button } from "./layout.js"
 import { icon } from "./icons.js"
-import { settingsTabs } from "./settings-general.js"
+import { settingsTabs } from "./settings-tabs.js"
 import type { MembersPageData, MemberRow } from "./contract.js"
 
 const LOCK = icon("lock", 12)
