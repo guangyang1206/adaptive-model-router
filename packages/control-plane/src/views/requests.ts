@@ -11,6 +11,7 @@
 // ===========================================================================
 
 import { stateBlock, ingestSnippet, button } from "./layout.js"
+import { icon } from "./icons.js"
 import type { RequestsPageData } from "./contract.js"
 
 function pageHead(): string {
@@ -53,7 +54,7 @@ function liveMount(): string {
 <div id="req-metrics" class="metrics" aria-live="polite"></div>
 <form class="toolbar" id="req-toolbar" onsubmit="return false">
   <div class="grow input-search">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    ${icon("search", 16)}
     <input class="input" type="search" id="req-search" placeholder="Search request id or model" aria-label="Search requests" />
   </div>
   <select class="select" id="req-status" aria-label="Filter by status" style="max-width:180px">

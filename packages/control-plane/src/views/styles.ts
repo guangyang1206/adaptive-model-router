@@ -14,7 +14,7 @@ export const CONTROL_PLANE_CSS = `
 :root, :root[data-theme="dark"]{
   color-scheme: dark;
   --bg-primary:#0D1117; --bg-surface:#161B22; --bg-elevated:#21262D; --bg-overlay:rgba(0,0,0,0.6);
-  --text-primary:#F0F6FC; --text-secondary:#8B949E; --text-muted:#484F58;
+  --text-primary:#F0F6FC; --text-secondary:#8B949E; --text-muted:#7D8590;
   --color-primary:#6366F1; --color-primary-hover:#818CF8; --color-primary-subtle:rgba(99,102,241,0.12);
   --color-primary-contrast:#FFFFFF;
   --color-success:#3FB950; --color-warning:#D29922; --color-error:#F85149; --color-info:#58A6FF;
@@ -33,7 +33,7 @@ export const CONTROL_PLANE_CSS = `
 :root[data-theme="light"]{
   color-scheme: light;
   --bg-primary:#FBFCFE; --bg-surface:#FFFFFF; --bg-elevated:#F4F6FA; --bg-overlay:rgba(15,23,42,0.35);
-  --text-primary:#1C2333; --text-secondary:#5B667A; --text-muted:#9AA4B6;
+  --text-primary:#1C2333; --text-secondary:#5B667A; --text-muted:#6B7280;
   --color-primary:#5457E5; --color-primary-hover:#4144C9; --color-primary-subtle:rgba(84,87,229,0.10);
   --color-primary-contrast:#FFFFFF;
   --color-success:#1A7F37; --color-warning:#9A6700; --color-error:#CF222E; --color-info:#0969DA;
@@ -339,8 +339,8 @@ table.data tbody tr[data-row]:focus-visible{background:var(--bg-elevated);outlin
   width:28px;height:28px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
   font-size:13px;font-weight:600;border:1px solid var(--border-default);color:var(--text-secondary);background:var(--bg-surface);
 }
-.steps .step.done .num{background:var(--color-success);border-color:var(--color-success);color:#fff}
-.steps .step.active .num{background:var(--color-primary);border-color:var(--color-primary);color:#fff}
+.steps .step.done .num{background:var(--color-success);border-color:var(--color-success);color:var(--color-primary-contrast)}
+.steps .step.active .num{background:var(--color-primary);border-color:var(--color-primary);color:var(--color-primary-contrast)}
 .steps .step .st-label{font-size:13px;color:var(--text-secondary)}
 .steps .step.active .st-label,.steps .step.done .st-label{color:var(--text-primary)}
 .steps .bar{height:1px;flex:1;background:var(--border-default);margin:0 6px}
