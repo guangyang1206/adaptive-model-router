@@ -237,7 +237,12 @@ The project ships in locked milestones. A few principles hold across all of them
 - Fallback / retry / timeout for non-streaming requests; no mid-stream fallback
 - SQLite storage with JSONL fallback
 - **Zero-dependency core SDK** — optional peers (embeddings ONNX, `node:sqlite`)
-  are loaded through a dynamic-import shim so a bundler can never pull them in
+  are loaded through a dynamic-import shim so a bundler can never pull them in.
+  `@adaptive-router/sdk` ships `dependencies: {}` and always will. Cloud
+  building blocks (Postgres, OAuth) live **only** in the optional MVP-3
+  `@adaptive-router/control-plane` layer — never in the SDK. This boundary is
+  machine-enforced: `pnpm check:deps` in CI fails the build if a cloud
+  dependency ever leaks into the SDK, dashboard, or CLI
 - **Honest degradation** — every downgrade (cache exact-only, hashing embeddings,
   storage error) is recorded in the trace `notes`; nothing degrades silently
 - English-first bilingual docs: README, Quickstart, API Reference
