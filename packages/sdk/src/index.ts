@@ -11,8 +11,11 @@ export * from "./eval/metrics.js"
 export * from "./eval/baseline.js"
 export * from "./eval/judge.js"
 export * from "./dashboard-readers.js"
+export * from "./reporter.js"
 
 import { resolveEmbeddingProvider } from "./embedding.js"
+
+import type { IngestReporter } from "./reporter.js"
 
 import type {
   AdaptiveRouterError,
@@ -82,6 +85,8 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
   const store = config.store ?? createMemoryTraceStore()
   const weights = config.weights ?? BUILTIN_WEIGHTS
   const cache = config.cache
+  // MVP-3 opt-in ingest reporter (impl-design §7). Undefined ⇒ no fetch ever.
+  const reporter = config.reporter
 
   // Embedding provider is resolved lazily on first cache use and memoized, so
   // routers that never touch the cache pay nothing (and the dynamic import of
@@ -152,7 +157,7 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
         trace.cacheHit = true
         if (weights.version !== "builtin") trace.weightsVersion = weights.version
         trace.notes = cacheNotes
-        await safeWriteTrace(store, trace)
+        await safeWriteTrace(store, trace, reporter)
         return { response: lookup.entry.response, routerTrace: trace }
       }
     }
@@ -164,7 +169,7 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
       const trace = createTrace(undefined, decision.candidates, "No candidate model satisfied routing constraints.", "failed")
       trace.attempts.push({ attemptNo: 1, modelId: "none", provider: "none", status: "skipped", errorCode: "AR_NO_CANDIDATE" })
       if (cacheNotes?.length) trace.notes = cacheNotes
-      await safeWriteTrace(store, trace)
+      await safeWriteTrace(store, trace, reporter)
       return { response: { content: "", raw: { error: "AR_NO_CANDIDATE" } }, routerTrace: trace }
     }
 
@@ -206,7 +211,7 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
           if (weights.version !== "builtin") trace.weightsVersion = weights.version
           await cache.set(request, response, trace, cacheCtx)
         }
-        await safeWriteTrace(store, trace)
+        await safeWriteTrace(store, trace, reporter)
         return { response, routerTrace: trace }
       } catch (error) {
         const normalized = provider.normalizeError(error)
@@ -228,7 +233,7 @@ export function createRouter(config: RouterConfig): AdaptiveRouter {
     const trace = createTrace(undefined, decision.candidates, lastError?.message ?? "All route attempts failed.", "failed", Date.now() - started)
     trace.attempts = attempts
     trace.notes = notes
-    await safeWriteTrace(store, trace)
+    await safeWriteTrace(store, trace, reporter)
     return { response: { content: "", raw: { error: lastError } }, routerTrace: trace }
   }
 
@@ -440,12 +445,17 @@ function isRetryable(code: AdaptiveRouterErrorCode): boolean {
   return ["AR_PROVIDER_RATE_LIMITED", "AR_PROVIDER_TIMEOUT", "AR_PROVIDER_5XX", "AR_NETWORK_ERROR"].includes(code)
 }
 
-async function safeWriteTrace(store: TraceStore, trace: RouterTrace): Promise<void> {
+async function safeWriteTrace(store: TraceStore, trace: RouterTrace, reporter?: IngestReporter): Promise<void> {
   try {
     await store.writeTrace(trace)
   } catch {
     // Storage errors must not break the model call path in MVP-0.
   }
+  // MVP-3: fire-and-forget forward to the control-plane when a reporter is
+  // configured. `report` swallows its own errors internally; `void` makes the
+  // fire-and-forget explicit so a slow/down control plane never blocks or
+  // breaks the caller. No reporter ⇒ this branch is skipped entirely (A11).
+  if (reporter) void reporter.report(trace)
 }
 
 /**

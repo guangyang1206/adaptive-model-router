@@ -1,0 +1,49 @@
+# docker-compose for a single-command self-host (Spec §1 "deployable with a
+# single command"). Brings up Postgres 17 + the control plane. First boot runs
+# migrations automatically (idempotent). Set BETTER_AUTH_SECRET before `up`.
+#
+#   cp deploy/.env.example .env && edit .env
+#   docker compose -f deploy/docker-compose.yml up --build
+#
+# The app connects to the `db` service over the compose network; the named
+# volume `cp-pgdata` persists data across restarts.
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: adaptive
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-adaptive}
+      POSTGRES_DB: adaptive_control_plane
+    volumes:
+      - cp-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adaptive -d adaptive_control_plane"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  control-plane:
+    build:
+      context: ../../..
+      dockerfile: packages/control-plane/deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://adaptive:${POSTGRES_PASSWORD:-adaptive}@db:5432/adaptive_control_plane
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      PORT: "3000"
+      HOST: 0.0.0.0
+      # Optional GitHub OAuth:
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      REGISTRATION_OPEN: ${REGISTRATION_OPEN:-true}
+    ports:
+      - "3000:3000"
+
+volumes:
+  cp-pgdata:

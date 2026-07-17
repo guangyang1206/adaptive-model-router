@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "test": "pnpm -r test",
     "lint": "eslint \"packages/**/*.ts\"",
+    "check:deps": "node scripts/check-dependency-boundary.mjs",
     "cli": "node packages/cli/dist/index.js"
   },
   "keywords": [

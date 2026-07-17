@@ -1,3 +1,5 @@
+import type { IngestReporter } from "./reporter.js"
+
 export type RouteTask = "plan" | "code" | "tool" | "final" | "extract" | "summarize"
 
 export type QualityPreference = "standard" | "balanced" | "high" | "critical"
@@ -65,6 +67,10 @@ export type RouterConfig = {
   cache?: SemanticCache
   weights?: RouteWeights
   embedding?: EmbeddingResolveOptions
+  // MVP-3 (append-only, opt-in). When unset, no ingest fetch is ever issued and
+  // behavior is byte-for-byte identical to MVP-1/MVP-2 (A11). Forwards each
+  // finished trace to a control-plane; guarded fire-and-forget at the call site.
+  reporter?: IngestReporter
 }
 
 export type RouteRequest = {

@@ -58,6 +58,12 @@ jobs:
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
+      # Machine-enforced dependency boundary (Spec §3, A13): SDK deps === {},
+      # dashboard/cli workspace-only, control-plane limited to the cloud-dep
+      # allowlist. Runs before build so a boundary breach fails fast.
+      - name: Dependency boundary
+        run: pnpm check:deps
+
       - name: Lint
         run: pnpm lint
 
@@ -86,6 +92,16 @@ jobs:
         working-directory: packages/cli
         run: node --test
 
+      # Control-plane pure-logic tests (Ruling 5): migrate planner, scope
+      # resolver, ingest branch coverage, and the pg data-source mapping — all
+      # run against stubbed `sql`, so NO database is needed here. Bare
+      # `node --test` auto-discovers the `test/**/*.test.mjs` files; the DB-backed
+      # round-trip deliberately lives OUTSIDE `test/` (in `integration/`) so it is
+      # NOT picked up here and only runs in the `control-plane-integration` job.
+      - name: Run control-plane tests (DB-less)
+        working-directory: packages/control-plane
+        run: node --test
+
       - name: Run CLI smoke test
         shell: bash
         run: |
@@ -103,3 +119,53 @@ jobs:
         run: |
           set -euo pipefail
           node --input-type=module -e "import { createDashboard, createReadOnlyDataAccess } from './packages/dashboard/dist/index.js'; const traces=[{traceId:'trace_demo',decisionId:'decision_demo',chosenModel:'local/demo',candidates:[],reason:'demo route',attempts:[{status:'success',latencyMs:12}],usage:{totalTokens:12,costUsd:0,estimated:true},estimated:true,latencyMs:12,status:'success'}]; const models=[{id:'local/demo',provider:'local',type:'self-hosted',capabilities:['reasoning'],health:{status:'ok'},enabled:true}]; const dash=await createDashboard({port:4329,data:createReadOnlyDataAccess({listTraces:()=>traces,listModels:()=>models})}); const summary=await fetch(dash.url + '/api/metrics/summary').then(r=>r.json()); const html=await fetch(dash.url + '/requests').then(r=>r.text()); if(summary.code!=='OK'||!html.includes('Routing Decisions')) throw new Error('dashboard smoke failed'); await dash.close(); console.log('dashboard smoke passed');"
+
+  # Ruling 5: DB-backed integration for the control plane runs in an isolated job
+  # with a postgres:17 service container. The service is torn down automatically
+  # when the job finishes (self-terminating), so it never lingers or blocks the
+  # rest of CI. This job proves: migrations apply on a real Postgres, and the
+  # ingest → project-scoped read path round-trips end to end.
+  control-plane-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: adaptive
+          POSTGRES_PASSWORD: adaptive
+          POSTGRES_DB: adaptive_control_plane_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U adaptive -d adaptive_control_plane_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://adaptive:adaptive@localhost:5432/adaptive_control_plane_ci
+      BETTER_AUTH_SECRET: ci-secret-ci-secret-ci-secret-32
+      BETTER_AUTH_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (sdk + dashboard + control-plane)
+        run: pnpm --filter @adaptive-router/sdk --filter @adaptive-router/dashboard --filter @adaptive-router/control-plane build
+
+      # Apply migrations against the real Postgres, then round-trip: create an
+      # org+project+token, POST a trace to /ingest/traces, and read it back
+      # through the project-scoped data source. Asserts the full server pipeline.
+      - name: Migrate + ingest round-trip
+        run: node packages/control-plane/integration/roundtrip.mjs
+

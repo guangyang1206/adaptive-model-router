@@ -41,6 +41,24 @@ export default tseslint.config(
     },
   },
   {
+    // Control-plane must import only PUBLIC package entrypoints — never deep
+    // links into another package's src/*. This preserves the dependency
+    // boundary (Spec §3): control-plane reuses sdk/dashboard through their
+    // published surface, not internals.
+    files: ["packages/control-plane/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            "@adaptive-router/sdk/src/*",
+            "@adaptive-router/dashboard/src/*",
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Test files (.mjs) use the Node test runner — lint lightly.
     files: ["packages/**/test/**/*.mjs"],
     languageOptions: {
