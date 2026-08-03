@@ -20,7 +20,11 @@ You do **not** need to keep your branch tidy. Commit as messily as you like (`wi
 - Quality and stability before cost optimization.
 - Open-source and self-hosted models are first-class citizens.
 - Routing decisions must be explainable.
-- MVP-0 stays small: no hosted SaaS, no model marketplace, no real-time answer-quality judgment.
+- Scope stays locked per milestone: no model marketplace, no real-time
+  answer-quality judgment, no billing. Team collaboration shipped in MVP-3, but
+  full RBAC, audit logs, and budgets are deferred — see [ROADMAP.md](ROADMAP.md).
+- The core SDK is zero-dependency, permanently. Cloud building blocks live only
+  in `@adaptive-router/control-plane`; `pnpm check:deps` enforces it.
 
 ## PR title format
 
@@ -31,7 +35,7 @@ You do **not** need to keep your branch tidy. Commit as messily as you like (`wi
 | Part | Values |
 |---|---|
 | `type` | `feat` `fix` `docs` `refactor` `test` `chore` `ci` `perf` |
-| `scope` *(optional)* | `sdk` `dashboard` `cli` `storage` `docs` `ci` `repo` |
+| `scope` *(optional)* | `sdk` `dashboard` `cli` `control-plane` `storage` `docs` `ci` `repo` |
 | `subject` | imperative, lower-case, no trailing period, ≤ ~72 chars |
 
 Examples:
@@ -46,30 +50,39 @@ A `!` after the type/scope marks a breaking change: `feat(sdk)!: change route() 
 
 ## Local checks
 
-Use a recent Node (the project targets Node 20+; CI runs on 22). From the repo root:
+Use a recent Node (the project targets Node 20+; CI runs on 22) and **pnpm 9** —
+this is a pnpm workspace, so `npm install` will not create the cross-package
+links and workspace imports will fail to resolve. From the repo root:
 
 ```bash
-npm install --no-save typescript@^5.6.0 eslint@^9.13.0 typescript-eslint@^8.10.0 @eslint/js@^9.13.0
+pnpm install --frozen-lockfile   # NOT npm install
 
-npx eslint "packages/**/*.ts"                  # lint
-npx tsc -p tsconfig.typecheck.json             # typecheck (no emit)
-npx tsc -p packages/sdk/tsconfig.json \
-  && npx tsc -p packages/dashboard/tsconfig.json \
-  && npx tsc -p packages/cli/tsconfig.json     # build
-node --test packages/sdk/test/*.mjs            # tests
+pnpm lint                        # eslint
+pnpm typecheck                   # tsc --noEmit, all package src
+pnpm check:deps                  # dependency-boundary assertion
+pnpm -r build                    # sdk -> dashboard -> cli -> control-plane
+pnpm -r test                     # all package tests
 ```
 
-> Note: this repo uses npm + the TypeScript compiler directly, **not** `pnpm` (Corepack
-> signature issues in CI). CI runs the same sequence plus CLI/dashboard smoke tests on
-> every PR. Green CI is required.
+> CI runs this same sequence plus CLI/dashboard smoke tests on every PR, and a
+> separate `control-plane-integration` job that applies migrations and
+> round-trips trace ingest against a real `postgres:17` service container. Green
+> CI is required.
+>
+> Note that `pnpm -r test` only covers the control plane's **DB-less** unit
+> tests. If you touch the control plane's data or auth layer, a fully green local
+> run is *not* proof the database path works — that's what the CI Postgres job is
+> for. Run it locally with Docker if you can; otherwise say plainly that the DB
+> path is unverified.
 
 ## Project structure
 
 ```text
-packages/sdk        Core SDK, providers, policy, storage, telemetry
-packages/dashboard  Local read-only dashboard
-packages/cli        CLI (init / doctor / inspect / export)
-examples/basic-agent Minimal usage example
+packages/sdk            Core SDK, providers, policy, storage, telemetry
+packages/dashboard      Local read-only dashboard
+packages/cli            CLI (init / doctor / inspect / export)
+packages/control-plane  Optional self-hosted team control plane (MVP-3)
+examples/basic-agent    Minimal usage example
 ```
 
 ## Good first contribution areas

@@ -1,8 +1,10 @@
 # Quickstart
 
-Adaptive Model Router has shipped MVP-1 (framework + provider expansion) and
-MVP-2 (evaluation + optimization). This quickstart shows the core developer flow;
-see the [API Reference](./api-reference.md) for the full surface.
+Adaptive Model Router has shipped MVP-1 (framework + provider expansion),
+MVP-2 (evaluation + optimization), and MVP-3 (self-hosted team control plane).
+This quickstart shows the core developer flow; see the
+[API Reference](./api-reference.md) for the full surface. If you want the shared
+team setup, jump to [Share it with a team](#share-it-with-a-team-mvp-3).
 
 ## 1. Install
 
@@ -93,6 +95,79 @@ adaptive-router --version    # or -v
 The CLI initializes config, checks provider environment variables, summarizes
 JSONL traces, exports local diagnostics, and runs offline evaluation sets against
 an optional baseline.
+
+## Share it with a team (MVP-3)
+
+Everything above is local and needs no server. If your team wants one shared
+view, deploy the optional control plane — it's a separate package and does not
+change the SDK's zero-dependency guarantee.
+
+### Start the control plane
+
+It needs Postgres plus three environment variables:
+
+| Variable | Required | Notes |
+|---|---|---|
+| `DATABASE_URL` | yes | `postgres://user:pass@host:5432/db` |
+| `BETTER_AUTH_SECRET` | yes | long random string |
+| `BETTER_AUTH_URL` | yes | public base URL (OAuth callback + cookie domain) |
+| `PORT` | no | default `3000` |
+| `HOST` | no | default `0.0.0.0` |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | no | enables GitHub login when **both** are set |
+| `REGISTRATION_OPEN` | no | default `true`; set `false` to lock down signups |
+| `POSTGRES_PASSWORD` | no | only used by the docker-compose `db` service (default `adaptive`) |
+
+The fastest path is docker-compose (brings up Postgres too):
+
+```bash
+cd packages/control-plane
+cp deploy/.env.example .env      # fill in the three required vars
+docker compose -f deploy/docker-compose.yml up
+```
+
+Or run it directly — migrations apply automatically on boot:
+
+```bash
+pnpm --filter @adaptive-router/control-plane build
+pnpm --filter @adaptive-router/control-plane start   # bin: adaptive-control-plane
+```
+
+A missing required variable fails the boot with an error naming that exact
+variable, before the port is bound — it never starts half-configured.
+
+### Create an org, a project, and a token
+
+Open the control plane in a browser, sign up (the first user becomes the
+organization owner), and follow onboarding to create your first project. Then go
+to **Settings → API Keys** and generate an ingest token. Tokens are per-project.
+
+### Point your app at it
+
+This is the only SDK-side change:
+
+```ts
+import { createRouter, createIngestReporter } from "@adaptive-router/sdk"
+
+const router = createRouter({
+  providers,
+  models,
+  reporter: createIngestReporter({
+    url: "https://router.example.com/ingest/traces",
+    token: process.env.ADAPTIVE_INGEST_TOKEN!,
+  }),
+})
+```
+
+Traces now show up in the team dashboard, scoped to that project. Notes:
+
+- **Opt-in and dependency-free.** The reporter uses the runtime's built-in
+  `fetch`. Omit `reporter` and nothing is sent — no network call, behavior is
+  identical to MVP-2.
+- **It can never break your app.** Transport errors are swallowed by default
+  (pass `onError` to observe them). A slow or down control plane does not affect
+  routing or local trace storage.
+- **The server decides which project a trace belongs to**, deriving `project_id`
+  from the token. A client cannot write into another project by editing the body.
 
 ## Notes and limitations
 

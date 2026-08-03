@@ -39,11 +39,16 @@ Add smoke tests that capture output for:
 
 ## Help wanted
 
-### 4. Add Qwen provider adapter
+> Note: the Qwen, Gemini, and vLLM provider adapters that used to be listed here
+> shipped in MVP-1. Use them as reference implementations when adding a new
+> provider — see `packages/sdk/src/providers/`.
+
+### 4. Add a new provider adapter
 
 **Labels**: `help wanted`, `provider`
 
-Implement a Qwen adapter. Prefer an OpenAI-compatible path if possible. Include:
+Pick a provider we don't cover yet (Mistral, Cohere, Bedrock, Azure OpenAI, …)
+and follow the shape of the existing adapters. Include:
 
 - model profile defaults
 - request mapping
@@ -52,17 +57,26 @@ Implement a Qwen adapter. Prefer an OpenAI-compatible path if possible. Include:
 - normalized errors
 - docs update
 
-### 5. Add Gemini provider adapter
+Keep provider-specific quirks entirely inside the adapter, and add no runtime
+dependency to the SDK.
 
-**Labels**: `help wanted`, `provider`
+### 5. Broaden control-plane test coverage
 
-Implement a native Gemini adapter with clear capability mapping. Keep provider-specific details isolated behind the adapter interface.
+**Labels**: `help wanted`, `control-plane`, `tests`
 
-### 6. Add vLLM provider adapter
+The control plane has DB-less unit tests plus one real-Postgres round-trip
+(`packages/control-plane/integration/roundtrip.mjs`, run by the
+`control-plane-integration` CI job). Good additions: member invite/removal flows,
+ingest token rotation, and negative auth cases (expired session, wrong project
+token). Assert the project-scoping guarantee rather than assuming it.
 
-**Labels**: `help wanted`, `provider`, `open-source`
+### 6. Add SQLite support for the cache and weights event streams
 
-Add support for a local/self-hosted vLLM OpenAI-compatible endpoint.
+**Labels**: `help wanted`, `storage`
+
+The SQLite store deliberately omits the `cache_lookup` / `weights_change` event
+streams that JSONL retains (a known P2 follow-up from MVP-2). Bring SQLite to
+parity, keeping `node:sqlite` optional and the JSONL fallback intact.
 
 ### 7. Improve SQLite support beyond fallback mode
 
@@ -78,8 +92,17 @@ Expand CI to test multiple Node versions once the package manager strategy is st
 
 ## Contribution principles
 
-- Keep MVP-0 scoped.
-- Do not add SaaS, RBAC, billing, or model marketplace features yet.
+- **Stay inside the current milestone's scope.** MVP-0 through MVP-3 have shipped;
+  see [ROADMAP.md](ROADMAP.md) for what is locked and what is deferred. Anything
+  outside the current milestone needs a spec change first.
+- **Never add a runtime dependency to `@adaptive-router/sdk`.** It ships
+  `dependencies: {}` and always will. Cloud building blocks (Postgres, OAuth)
+  belong only in `@adaptive-router/control-plane`; `pnpm check:deps` enforces this
+  and will fail your build.
+- Do not add billing or model marketplace features. Team collaboration landed in
+  MVP-3, but full RBAC (`admin` / `viewer`), audit logs, team budgets, and
+  organization-level provider keys are deferred to MVP-4+ — don't start them
+  without a scope decision.
 - Do not claim real-time answer quality judgment.
 - Keep provider quirks inside provider adapters.
 - Never commit secrets or real API keys.
