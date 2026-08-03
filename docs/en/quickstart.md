@@ -8,9 +8,59 @@ team setup, jump to [Share it with a team](#share-it-with-a-team-mvp-3).
 
 ## 1. Install
 
+> **Not on npm yet.** The packages are unreleased (`0.0.0`), so
+> `pnpm add @adaptive-router/sdk` will fail with a 404. Until the first release,
+> build from source — it takes about a minute.
+
 ```bash
-pnpm add @adaptive-router/sdk
+git clone https://github.com/guangyang1206/adaptive-model-router.git
+cd adaptive-model-router
+
+pnpm install        # pnpm 9, Node 20+ (CI runs 22). npm will NOT work here:
+                    # it skips the workspace links and cross-package imports break.
+pnpm -r build       # builds sdk -> dashboard -> cli -> control-plane
 ```
+
+Then use it from your own project by pointing at the built workspace — either
+link it (run this in *your* project; `pnpm link <dir>` takes a path):
+
+```bash
+cd /path/to/your-project
+pnpm link /path/to/adaptive-model-router/packages/sdk
+```
+
+…or add a `file:` dependency in your `package.json`:
+
+```json
+{
+  "dependencies": {
+    "@adaptive-router/sdk": "file:../adaptive-model-router/packages/sdk"
+  }
+}
+```
+
+The quickest way to try it without wiring anything is to run inside the cloned
+repo, where the workspace links already exist:
+
+```bash
+node --input-type=module -e "
+import { createRouter, createStaticProvider } from './packages/sdk/dist/index.js'
+const models = [{ id: 'local/demo', provider: 'demo', model: 'demo', type: 'self-hosted',
+  kind: 'openai-compatible', tier: 'balanced', contextWindow: 8192,
+  capabilities: ['reasoning'], enabled: true,
+  cost: { inputPer1M: 0, outputPer1M: 0, currency: 'USD', estimated: true },
+  health: { status: 'ok', successRate: 1 } }]
+const router = createRouter({ providers: [createStaticProvider('demo', models)], models })
+const e = await router.evaluate({ messages: [{ role: 'user', content: 'Plan a task.' }], route: { task: 'plan' } })
+console.log('ranked candidates:', e.candidates.length)
+"
+```
+
+That needs no API key — `evaluate()` only makes the routing decision, it never
+calls a provider.
+
+Once the packages are published, this section collapses back to a single
+`pnpm add @adaptive-router/sdk`.
 
 ## 2. Initialize a router
 

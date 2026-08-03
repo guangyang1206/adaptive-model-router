@@ -118,6 +118,25 @@ earlier milestones, not commitments.
 
 ---
 
+## Distribution — not shipped ⬜
+
+Independent of feature milestones, and currently the **single biggest barrier to
+adoption**: all four packages are at `0.0.0` and unpublished, so the documented
+`pnpm add @adaptive-router/sdk` returns a 404. Everything works from a source
+build, but no one can install it the normal way.
+
+- ⬜ Publish `@adaptive-router/sdk` to npm (the one that actually unblocks users)
+- ⬜ Publish `dashboard`, `cli`, `control-plane`
+- ⬜ Decide versioning (independent vs. fixed across the workspace) and add a
+  release workflow (tag → build → publish with provenance)
+- ⬜ Verify each tarball's `files` fieldships what's needed and nothing more
+- ⬜ Simplify the Quickstart install section back to one line once published
+
+Until this lands, every install instruction must say plainly that the packages
+are unreleased. Docs that imply otherwise are worse than no docs.
+
+---
+
 ## How priorities are decided
 
 The scope is **locked per milestone** — anything outside the current milestone's
