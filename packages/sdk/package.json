@@ -1,14 +1,57 @@
 {
   "name": "@adaptive-router/sdk",
-  "version": "0.0.0",
-  "description": "SDK-first adaptive model router for agent apps.",
+  "version": "0.1.0",
+  "description": "Zero-dependency adaptive model router for agent apps — quality-gated routing, fallback, and tracing across OpenAI, Anthropic, DeepSeek, Gemini, Qwen, Ollama, and self-hosted vLLM.",
   "type": "module",
   "license": "Apache-2.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guangyang1206/adaptive-model-router.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/guangyang1206/adaptive-model-router#readme",
+  "bugs": {
+    "url": "https://github.com/guangyang1206/adaptive-model-router/issues"
+  },
+  "keywords": [
+    "llm",
+    "model-router",
+    "adaptive-routing",
+    "agent",
+    "fallback",
+    "zero-dependency",
+    "openai",
+    "anthropic",
+    "deepseek",
+    "gemini",
+    "qwen",
+    "ollama",
+    "vllm",
+    "langchain",
+    "vercel-ai-sdk"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test",
     "lint": "tsc -p tsconfig.json --noEmit"

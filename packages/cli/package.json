@@ -1,7 +1,7 @@
 {
   "name": "@adaptive-router/cli",
-  "version": "0.0.0",
-  "description": "Developer CLI for Adaptive Model Router.",
+  "version": "0.1.0",
+  "description": "Developer CLI for Adaptive Model Router — init config, check provider env, inspect traces, export diagnostics, run the eval harness.",
   "type": "module",
   "license": "Apache-2.0",
   "bin": {
@@ -9,9 +9,35 @@
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guangyang1206/adaptive-model-router.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/guangyang1206/adaptive-model-router#readme",
+  "bugs": {
+    "url": "https://github.com/guangyang1206/adaptive-model-router/issues"
+  },
+  "keywords": [
+    "llm",
+    "model-router",
+    "cli",
+    "agent",
+    "eval",
+    "tracing"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json && chmod +x dist/index.js",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && chmod +x dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test",
     "lint": "tsc -p tsconfig.json --noEmit"

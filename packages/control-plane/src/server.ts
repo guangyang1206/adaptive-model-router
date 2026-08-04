@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // node:http server + flat route table + bootstrap (impl-design §2.3, §3.1).
 // One server, no router lib. Request pipeline:
 //   /api/auth/*        → Better-Auth handler (session, sign-in/up, OAuth)

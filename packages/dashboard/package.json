@@ -1,17 +1,42 @@
 {
   "name": "@adaptive-router/dashboard",
-  "version": "0.0.0",
-  "description": "Local read-only dashboard for Adaptive Model Router.",
+  "version": "0.1.0",
+  "description": "Local read-only dashboard for Adaptive Model Router — inspect routing decisions, models, evals, semantic cache, and route learning.",
   "type": "module",
   "license": "Apache-2.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guangyang1206/adaptive-model-router.git",
+    "directory": "packages/dashboard"
+  },
+  "homepage": "https://github.com/guangyang1206/adaptive-model-router#readme",
+  "bugs": {
+    "url": "https://github.com/guangyang1206/adaptive-model-router/issues"
+  },
+  "keywords": [
+    "llm",
+    "model-router",
+    "dashboard",
+    "observability",
+    "tracing"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@adaptive-router/sdk": "workspace:*"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test",
     "lint": "tsc -p tsconfig.json --noEmit"
