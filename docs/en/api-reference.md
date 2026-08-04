@@ -5,8 +5,12 @@
 Creates an adaptive model router.
 
 ```ts
-const router = createRouter({ providers, models, policy, store })
+const router = createRouter({ providers, models, policy, store, reporter })
 ```
+
+`reporter` is optional (MVP-3). When omitted, the router never performs an
+ingest fetch and behaves identically to MVP-2. See
+[`createIngestReporter`](#createingestreporteroptions).
 
 ## `router.chat(request)`
 
@@ -208,6 +212,51 @@ if (looksGood) registry.adopt(candidate.version)
 
 Helpers: `computeReward`, `diffWeights`, `flattenWeights`, `unflattenWeights`,
 `WEIGHT_ORDER`, `WEIGHT_BOUNDS`, `DEFAULT_REWARD_WEIGHTS`.
+
+## Trace ingest (MVP-3)
+
+### `createIngestReporter(options)`
+
+Builds an opt-in sink that forwards finished traces to a self-hosted control
+plane. Built entirely on the runtime's global `fetch`, so it adds **no**
+dependency to the SDK.
+
+```ts
+import { createRouter, createIngestReporter } from "@adaptive-router/sdk"
+
+const router = createRouter({
+  providers,
+  models,
+  reporter: createIngestReporter({
+    url: "https://router.example.com/ingest/traces",
+    token: process.env.ADAPTIVE_INGEST_TOKEN!, // per-project, from Settings → API Keys
+    // onError: (e) => log.warn(e),// default: swallow
+    // fetch: myFetch,                          // injectable for tests
+  }),
+})
+```
+
+Options:
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `url` | `string` | yes | full ingest endpoint |
+| `token` | `string` | yes | sent as `Authorization: Bearer <token>` |
+| `onError` | `(error: unknown) => void` | no | default swallows transport errors |
+| `fetch` | `typeof fetch` | no | defaults to the global `fetch` |
+
+Returns an `IngestReporter` — `{ report(trace: RouterTrace): Promise<void> }`.
+
+Guarantees worth relying on:
+
+- **Never breaks routing.** Transport errors are swallowed by default (or routed
+  to `onError`). A down or slow control plane cannot fail the caller's model call
+  and does not affect local trace storage.
+- **Truly opt-in.** Without a `reporter`, no code in this module executes and
+  behavior is byte-for-byte identical to MVP-2.
+- **The server owns tenancy.** `project_id` is derived from the token on the
+  server; it is never read from the posted body, so a client cannot write into
+  another project.
 
 ## Error codes
 

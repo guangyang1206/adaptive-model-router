@@ -1,7 +1,7 @@
 # Roadmap
 
 > Status legend: ✅ done · 🔵 in progress · ⬜ planned
-> Last updated: 2026-07-14 · Current focus: **MVP-3 — team / enterprise / SaaS control plane** (MVP-2 shipped)
+> Last updated: 2026-08-03 · Current focus: **MVP-4 — governance and scale** (MVP-3 shipped)
 
 This roadmap reflects *actual* progress, not just intent. For the day-to-day
 development workflow and quality gates behind each shipped item, see
@@ -47,37 +47,93 @@ and broaden provider coverage. **Shipped.**
 - ✅ LangChain / LangGraph adapter (dependency-free `createLangChainModel`)
 - ✅ Vercel AI SDK adapter (dependency-free `createVercelModel`, `LanguageModelV1`)
 - ✅ Dashboard filtering and model comparison (server-side request filter + `/api/models/compare`)
-- ⬜ Policy dry-run UI — *deferred to MVP-3+*
-- ⬜ Local Proxy / HTTP Bridge — *deferred to MVP-3+*
+- ⬜ Policy dry-run UI — *deferred to MVP-4+*
+- ⬜ Local Proxy / HTTP Bridge — *deferred to MVP-4+*
 
 ---
 
 ## MVP-2 — Evaluation and Optimization ✅
 
 Goal: move from "routes correctly" to "routes *well*", with feedback loops.
-**Shipped** (except the two items noted below, deferred to MVP-3+).
+**Shipped** (except the two items noted below, deferred to MVP-4+).
 
 - ✅ Eval harness (offline, cost-guarded — never issues real network calls)
 - ✅ User-defined eval sets (JSON case files + baseline snapshots)
 - ✅ LLM judge / human feedback interface (pluggable judge hook, human-in-the-loop)
 - ✅ Route outcome learning (bounded weight suggestions, `adopted: false` by default, regression-gated)
 - ✅ Semantic cache (embedding-based, honest degradation when no embedder wired)
-- ⬜ Prompt / context compression — *deferred to MVP-3+*
-- ⬜ Helicone / Langfuse exporter — *deferred to MVP-3+*
+- ⬜ Prompt / context compression — *deferred to MVP-4+*
+- ⬜ Helicone / Langfuse exporter — *deferred to MVP-4+*
 
 ---
 
-## MVP-3 — Team / Enterprise / SaaS ⬜ (Next)
+## MVP-3 — Team Control Plane ✅
 
-Goal: multi-user, multi-project control plane for teams.
+Goal: a multi-user, multi-project control plane so a team can share one routing
+view. **Shipped** as the optional, self-hosted `@adaptive-router/control-plane`
+package (the core SDK stays zero-dependency). Enterprise-grade governance items
+(audit, budgets, full RBAC, org-level keys) are deferred to MVP-4+.
 
-- ⬜ Hosted dashboard
-- ⬜ Multi-project and multi-environment support
-- ⬜ RBAC
+- ✅ Hosted dashboard — self-hosted, multi-user; reuses the existing
+  `DashboardDataSource` abstraction so all 12 `/api/*` endpoints become
+  multi-tenant with no dashboard changes
+- ✅ Multi-project support — Organization → Project two-level tenancy; each
+  project owns its traces and ingest tokens
+- ✅ Authentication — Better-Auth: email + password, optional GitHub OAuth,
+  closeable registration (`REGISTRATION_OPEN`)
+- ✅ Structural project isolation — the PG data source captures `projectId` at
+  construction, forcing `WHERE project_id = $1` on every query; ingest derives
+  `project_id` from the token hash, never from the request body
+- ✅ Postgres persistence — `postgres.js`, no ORM, hand-written SQL migrations
+  with a version table (Better-Auth gets its own `pg.Pool`)
+- ✅ SDK trace ingest — opt-in `createIngestReporter` using built-in `fetch`;
+  zero new SDK dependencies, honest no-op when unconfigured
+- ✅ Enterprise deployment templates — docker-compose, Dockerfile, Render blueprint
+- ✅ Real-Postgres CI — `control-plane-integration` job applies migrations and
+  round-trips ingest against a `postgres:17` service container
+- 🔵 RBAC — `owner` / `member` enforced (403 on non-owner writes); `admin` /
+  `viewer` reserved and rendered disabled — *full matrix deferred to MVP-4+*
+- ⬜ Audit log — *deferred to MVP-4+*
+- ⬜ Team budget — *deferred to MVP-4+*
+- ⬜ Organization-level provider keys — *deferred to MVP-4+*
+- ⬜ Multi-environment separation within a project — *deferred to MVP-4+; today,
+  use one project per environment*
+
+---
+
+## MVP-4 — Governance and Scale ⬜ (Next)
+
+Goal: turn the shipped control plane into something an organization can govern.
+Scope is **not yet locked** — the items below are candidates carried over from
+earlier milestones, not commitments.
+
+- ⬜ Full RBAC matrix (`admin` / `viewer` activation)
 - ⬜ Audit log
-- ⬜ Team budget
+- ⬜ Team budgets and cost attribution
 - ⬜ Organization-level provider keys
-- ⬜ Enterprise deployment templates
+- ⬜ Policy dry-run UI — *carried from MVP-1*
+- ⬜ Local Proxy / HTTP Bridge — *carried from MVP-1*
+- ⬜ Prompt / context compression — *carried from MVP-2*
+- ⬜ Helicone / Langfuse exporter — *carried from MVP-2*
+
+---
+
+## Distribution — not shipped ⬜
+
+Independent of feature milestones, and currently the **single biggest barrier to
+adoption**: all four packages are at `0.0.0` and unpublished, so the documented
+`pnpm add @adaptive-router/sdk` returns a 404. Everything works from a source
+build, but no one can install it the normal way.
+
+- ⬜ Publish `@adaptive-router/sdk` to npm (the one that actually unblocks users)
+- ⬜ Publish `dashboard`, `cli`, `control-plane`
+- ⬜ Decide versioning (independent vs. fixed across the workspace) and add a
+  release workflow (tag → build → publish with provenance)
+- ⬜ Verify each tarball's `files` fieldships what's needed and nothing more
+- ⬜ Simplify the Quickstart install section back to one line once published
+
+Until this lands, every install instruction must say plainly that the packages
+are unreleased. Docs that imply otherwise are worse than no docs.
 
 ---
 
