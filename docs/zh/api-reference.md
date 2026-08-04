@@ -5,8 +5,11 @@
 创建自适应模型路由器。
 
 ```ts
-const router = createRouter({ providers, models, policy, store })
+const router = createRouter({ providers, models, policy, store, reporter })
 ```
+
+`reporter` 是可选的（MVP-3）。不传时路由器绝不发起 ingest 请求，行为与 MVP-2 完全一致。
+参见 [`createIngestReporter`](#createingestreporteroptions)。
 
 ## `router.chat(request)`
 
@@ -204,6 +207,47 @@ if (looksGood) registry.adopt(candidate.version)
 
 辅助函数：`computeReward`、`diffWeights`、`flattenWeights`、`unflattenWeights`、
 `WEIGHT_ORDER`、`WEIGHT_BOUNDS`、`DEFAULT_REWARD_WEIGHTS`。
+
+## Trace 上报（MVP-3）
+
+### `createIngestReporter(options)`
+
+构造一个可选的上报 sink，把已完成的 trace 转发到自托管的控制面。它完全基于运行时内置的
+`fetch`，因此**不会**给 SDK 增加任何依赖。
+
+```ts
+import { createRouter, createIngestReporter } from "@adaptive-router/sdk"
+
+const router = createRouter({
+  providers,
+  models,
+  reporter: createIngestReporter({
+    url: "https://router.example.com/ingest/traces",
+    token: process.env.ADAPTIVE_INGEST_TOKEN!, // 按项目隔离，来自 Settings → API Keys
+    // onError: (e) => log.warn(e),            // 默认吞掉错误
+    // fetch: myFetch,                         // 便于测试注入
+  }),
+})
+```
+
+参数：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `url` | `string` | 是 | 完整的 ingest 端点 |
+| `token` | `string` | 是 | 以 `Authorization: Bearer <token>` 发送 |
+| `onError` | `(error: unknown) => void` | 否 | 默认吞掉传输错误 |
+| `fetch` | `typeof fetch` | 否 | 默认使用全局 `fetch` |
+
+返回一个 `IngestReporter` —— `{ report(trace: RouterTrace): Promise<void> }`。
+
+可以放心依赖的几条保证：
+
+- **绝不影响路由。** 传输错误默认被吞掉（或交给 `onError`）。控制面宕机或变慢都不会让调
+  用方的模型请求失败，也不影响本地 trace 存储。
+- **真正的可选。** 不传 `reporter` 时该模块的代码一行都不会执行，行为与 MVP-2 字节级一致。
+- **租户归属由服务端决定。** `project_id` 在服务端从 token 派生，绝不读取请求体中的值，
+  因此客户端无法写入其它项目。
 
 ## 错误码
 

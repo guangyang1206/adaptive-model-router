@@ -2,8 +2,8 @@
 
 > Status: active
 > Owner: maintainer (`guangyang1206`) + automated dev loop
-> Last reviewed: 2026-06-29
-> Cadence: every 6 hours until 2026-06-30, then re-evaluate
+> Last reviewed: 2026-08-03
+> Cadence: on-demand (milestone-driven)
 
 This document defines how the project is developed, reviewed, and synced to GitHub.
 It is tuned to industry best practices for small open-source projects: a protected
@@ -61,14 +61,15 @@ main            ← protected; only human-reviewed SQUASH merges (1 commit / PR)
 | 1. Align | Read `adaptive-model-router-spec-v0.1.md` + `ROADMAP.md`; compare against current code. Identify the single highest-value next item. | — |
 | 2. Sync | `git checkout develop` (create if missing), rebase onto latest `main`. | clean rebase |
 | 3. Develop | Implement that one item. Keep diffs focused. | — |
-| 4. Lint | `eslint "packages/**/*.ts"`. | must pass |
-| 5. Typecheck | `tsc -p tsconfig.typecheck.json` (noEmit, all package src). | must pass |
-| 6. Build | `tsc` build for sdk → dashboard → cli. | must pass |
-| 7. Test | `node --test packages/sdk/test/*.mjs`. | must pass |
-| 8. Smoke | CLI smoke (init/doctor/inspect/export) + dashboard smoke (boot + `/api/metrics/summary` + `/requests`). | must pass |
-| 9. Commit | Conventional commit on `develop`. | only if 4–8 green |
-| 10. Push | `git push origin develop`. | — |
-| 11. Log | Append cycle summary to `.workbuddy/memory/YYYY-MM-DD.md`. | always |
+| 4. Lint | `pnpm lint`. | must pass |
+| 5. Typecheck | `pnpm typecheck` (noEmit, all package src). | must pass |
+| 6. Deps | `pnpm check:deps` — dependency-boundary assertion. | must pass |
+| 7. Build | `pnpm -r build` (sdk → dashboard → cli → control-plane). | must pass |
+| 8. Test | `pnpm -r test` (sdk, dashboard, cli, control-plane DB-less). | must pass |
+| 9. Smoke | CLI smoke (init/doctor/inspect/export) + dashboard smoke (boot + `/api/metrics/summary` + `/requests`). | must pass |
+| 10. Commit | Conventional commit on `develop`. | only if 4–9 green |
+| 11. Push | `git push origin develop`. | — |
+| 12. Log | Append cycle summary to `.workbuddy/memory/YYYY-MM-DD.md`. | always |
 
 **If any gate fails:** stop, write the failure + root cause to the daily log, push
 nothing. Never commit red code.
@@ -76,19 +77,27 @@ nothing. Never commit red code.
 ### Lint / typecheck / build / test / smoke commands
 
 ```bash
-TSC=/Users/yangguang/.workbuddy/binaries/node/workspace/node_modules/.bin/tsc
-NODE=/Users/yangguang/.workbuddy/binaries/node/versions/20.18.0/bin/node
-
-$NODE node_modules/.bin/eslint "packages/**/*.ts"
-$TSC -p tsconfig.typecheck.json
-$TSC -p packages/sdk/tsconfig.json
-$TSC -p packages/dashboard/tsconfig.json
-$TSC -p packages/cli/tsconfig.json
-$NODE --test packages/sdk/test/*.mjs
+pnpm install --frozen-lockfile   # NOT npm install — workspace links matter
+pnpm lint
+pnpm typecheck
+pnpm check:deps
+pnpm -r build
+pnpm -r test
 ```
 
-(Managed `tsc` + Node's built-in test runner are used instead of `pnpm`, which fails
-in this environment due to Corepack signature issues — see `.learnings/ERRORS.md`.)
+### The one gate that only CI can run
+
+`pnpm -r test` covers the control plane's **DB-less** unit tests only. The
+real-Postgres proof lives in the `control-plane-integration` CI job, which brings
+up a `postgres:17` service container, applies the migrations, and round-trips
+ingest → project-scoped read (`packages/control-plane/integration/roundtrip.mjs`).
+
+Treat a fully green local run as **necessary but not sufficient**. Adapter-wiring
+bugs are invisible without a live connection — MVP-3 shipped exactly such a bug
+(Better-Auth needs a node-postgres `Pool`, not a bare `postgres.js` client) past
+a completely green local gate, and only the real-Postgres job caught it. If you
+have Docker locally, run that round-trip before opening the PR; if not, say so
+plainly rather than implying the DB path was verified.
 
 ---
 
@@ -111,7 +120,7 @@ without forcing the automation to rewrite history.
    ```
    <type>(<scope>): <subject>
    type ∈ feat | fix | docs | refactor | test | chore | ci | perf
-   scope ∈ sdk | dashboard | cli | storage | docs | ci | repo   (optional)
+   scope ∈ sdk | dashboard | cli | control-plane | storage | docs | ci | repo   (optional)
    ```
 
    Examples: `feat(sdk): add Gemini provider adapter`, `fix(cli): redact secrets in inspect`.
@@ -148,20 +157,27 @@ At each roadmap milestone (or when `develop` has accumulated a meaningful featur
 
 ---
 
-## 5. Current target scope (as of 2026-06-29)
+## 5. Current target scope (as of 2026-08-03)
 
-MVP-0 is **functionally complete** (SDK, quality-gated routing, 4 providers, fallback,
-SQLite+JSONL storage, 2-page dashboard, bilingual docs). The dev loop's near-term
-objectives are therefore **MVP-1 + quality hardening**, in priority order:
+MVP-0 through MVP-3 are **complete and on `main`**: the SDK with quality-gated
+routing across seven providers, framework adapters, SQLite+JSONL storage, the
+local dashboard, the CLI, the MVP-2 eval/cache/learning loop, and the optional
+self-hosted control plane (orgs/projects, Better-Auth, Postgres, project-scoped
+multi-tenant dashboard, deploy templates).
 
-1. ~~**Quality gate completion** — add an eslint config + a `lint` step the CI actually runs.~~ — ✅ done (`9de8f29` on develop): eslint flat config + CI lint step; caught and fixed 3 unused-import issues.
-2. **Fix known correctness/clarity debts**
-   - ~~`router.dashboard()` returns a URL without starting a server~~ — ✅ fixed (3df0f47): now returns an honest `DashboardHandle { url, started:false, hint }`.
-   - ~~`redactConfig()` in CLI is a no-op~~ — ✅ fixed (3df0f47): real recursive secret redaction.
-   - ~~token/cost estimation measured stringified-length, not content length~~ — ✅ fixed (dbc078a).
-3. **Provider expansion (MVP-1)** — Gemini adapter, Qwen adapter, vLLM support.
-4. **Framework adapters** — LangChain/LangGraph, Vercel AI SDK.
-5. **Dashboard filtering + model comparison.**
+Next milestone is **MVP-4 — governance and scale**, whose scope is **not yet
+locked**. Candidates (see [ROADMAP.md](ROADMAP.md)): full RBAC matrix
+(`admin` / `viewer`), audit log, team budgets, organization-level provider keys,
+plus items carried over from earlier milestones (policy dry-run UI, local
+proxy / HTTP bridge, prompt compression, Helicone/Langfuse exporter).
+
+Standing constraints that outlive any milestone:
+
+- **Never add a runtime dependency to `@adaptive-router/sdk`** — it ships
+  `dependencies: {}`. Cloud building blocks belong only in the control plane, and
+  `pnpm check:deps` enforces this in CI.
+- **`BUILTIN_WEIGHTS` is frozen** — byte-for-byte MVP-1 routing compatibility.
+- **Honest degradation** — no silent fallbacks; record the downgrade.
 
 Anything outside the spec's locked scope requires a spec change first — do not let the
 loop silently expand scope.
@@ -171,7 +187,7 @@ loop silently expand scope.
 ## 6. Definition of Done (per item)
 
 - [ ] Implemented per spec, no scope creep
-- [ ] Build passes (3 packages)
+- [ ] Build passes (4 packages)
 - [ ] Tests pass; new behavior has at least one test
 - [ ] Smoke passes
 - [ ] Docs/README updated if public API changed
