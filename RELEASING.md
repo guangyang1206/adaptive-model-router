@@ -6,6 +6,9 @@ Read the whole file before running anything.
 
 ## Current state
 
+The `@adaptive-router` scope exists on npm (created 2026-08-04). All four package
+names are still unclaimed, and the packages are publish-ready at 0.1.0.
+
 | Package | Version | On npm |
 | --- | --- | --- |
 | `@adaptive-router/sdk` | 0.1.0 | not yet |
@@ -18,16 +21,46 @@ compatibility trivial to reason about: `sdk@0.1.0` pairs with `cli@0.1.0`.
 
 ## One-time setup
 
-The `@adaptive-router` scope must exist before the first publish.
+**Done (2026-08-04):** the `@adaptive-router` org exists, created with npm's
+default `Developers` team. Free orgs can only publish public packages — which is
+exactly what we want here.
+
+What still has to happen **on the machine doing the publish**: creating the org
+in a browser does not write local credentials. Confirm with:
 
 ```bash
-npm login                      # authenticate
-npm org create adaptive-router # free org; only allows public packages, which is what we want
-npm whoami                     # confirm
+npm whoami     # ENEEDAUTH means this machine is not authenticated
+npm login      # writes ~/.npmrc
+npm whoami     # should print your username
 ```
 
 Each package already declares `publishConfig.access: "public"`, so scoped
 packages publish publicly without extra flags.
+
+### Team / access (optional)
+
+The default `Developers` team owns the scope. For a solo maintainer nothing more
+is needed. To add a collaborator later:
+
+```bash
+npm team add adaptive-router:developers <username>
+npm access list packages @adaptive-router   # verify who can publish
+```
+
+## Publish from `main`, not from a feature branch
+
+A published version is permanent, so the code behind `@adaptive-router/sdk@0.1.0`
+must be reachable on `main` forever. Publishing from a branch that later gets
+squashed or amended leaves a version on npm that corresponds to no commit
+anyone can find.
+
+So: **merge the release-prep PR first, then publish from `main`.**
+
+```bash
+git checkout main
+git pull
+git status --porcelain    # must be empty; pnpm publish refuses a dirty tree
+```
 
 ## Pre-publish checks
 
