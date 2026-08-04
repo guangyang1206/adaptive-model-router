@@ -1,7 +1,7 @@
 {
   "name": "@adaptive-router/control-plane",
-  "version": "0.0.0",
-  "description": "Self-hostable multi-user team control plane for Adaptive Model Router.",
+  "version": "0.1.0",
+  "description": "Self-hostable multi-tenant team control plane for Adaptive Model Router — organizations, projects, Better-Auth login, Postgres persistence, and project-scoped dashboards.",
   "type": "module",
   "license": "Apache-2.0",
   "main": "dist/index.js",
@@ -9,9 +9,38 @@
   "bin": {
     "adaptive-control-plane": "dist/server.js"
   },
-  "files": ["dist", "deploy"],
+  "files": [
+    "dist",
+    "deploy",
+    "deploy/.env.example",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guangyang1206/adaptive-model-router.git",
+    "directory": "packages/control-plane"
+  },
+  "homepage": "https://github.com/guangyang1206/adaptive-model-router#readme",
+  "bugs": {
+    "url": "https://github.com/guangyang1206/adaptive-model-router/issues"
+  },
+  "keywords": [
+    "llm",
+    "model-router",
+    "control-plane",
+    "multi-tenant",
+    "self-hosted",
+    "postgres",
+    "better-auth"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-migrations.mjs",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/copy-migrations.mjs && chmod +x dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test",
     "lint": "tsc -p tsconfig.json --noEmit",
