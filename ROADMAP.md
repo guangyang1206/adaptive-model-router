@@ -118,22 +118,36 @@ earlier milestones, not commitments.
 
 ---
 
-## Distribution — not shipped ⬜
+## Distribution — publish-ready, not yet published 🔵
 
-Independent of feature milestones, and currently the **single biggest barrier to
-adoption**: all four packages are at `0.0.0` and unpublished, so the documented
-`pnpm add @adaptive-router/sdk` returns a 404. Everything works from a source
-build, but no one can install it the normal way.
+Independent of feature milestones, and still the **single biggest barrier to
+adoption**: nothing is on npm, so the documented `pnpm add @adaptive-router/sdk`
+returns a 404. Everything works from a source build, but no one can install it
+the normal way.
 
-- ⬜ Publish `@adaptive-router/sdk` to npm (the one that actually unblocks users)
-- ⬜ Publish `dashboard`, `cli`, `control-plane`
-- ⬜ Decide versioning (independent vs. fixed across the workspace) and add a
-  release workflow (tag → build → publish with provenance)
-- ⬜ Verify each tarball's `files` fieldships what's needed and nothing more
+Prep is done (PR #13). What remains is the publish itself, which needs npm
+credentials on the publishing machine.
+
+- ✅ Publish metadata on all four packages — version `0.1.0` **fixed across the
+  workspace**, repository/homepage/bugs, keywords, engines,
+  `publishConfig.access: public`
+- ✅ Verify each tarball ships what's needed and nothing more — checked by packing
+  and installing into a clean project, not by reading manifests. Caught three real
+  defects: a missing shebang on control-plane's `bin`, `deploy/.env.example`
+  excluded by npm's dotfile rule, and a stale `dist/index.test.js` orphan that was
+  both shipping and inflating the test count
+- ✅ `RELEASING.md` — scope setup, pre-publish gates, tarball verification,
+  publish order, version policy, bad-release recovery
+- ✅ npm scope `@adaptive-router` created
+- ⬜ `npm login` on the publishing machine (creating the org in a browser writes
+  no local credentials)
+- ⬜ Publish `sdk` → `dashboard` → `cli` → `control-plane` from `main`
+- ⬜ Tag `v0.1.0` + CHANGELOG entry
 - ⬜ Simplify the Quickstart install section back to one line once published
+- ⬜ Add a CI release workflow (tag → build → publish with provenance)
 
-Until this lands, every install instruction must say plainly that the packages
-are unreleased. Docs that imply otherwise are worse than no docs.
+Until the packages actually resolve, every install instruction must say plainly
+that they are unreleased. Docs that imply otherwise are worse than no docs.
 
 ---
 

@@ -8,9 +8,9 @@ team setup, jump to [Share it with a team](#share-it-with-a-team-mvp-3).
 
 ## 1. Install
 
-> **Not on npm yet.** The packages are unreleased (`0.0.0`), so
-> `pnpm add @adaptive-router/sdk` will fail with a 404. Until the first release,
-> build from source — it takes about a minute.
+> **Not on npm yet.** The packages are publish-ready at `0.1.0` but not yet
+> published, so `pnpm add @adaptive-router/sdk` will fail with a 404. Until the
+> first release, build from source — it takes about a minute.
 
 ```bash
 git clone https://github.com/guangyang1206/adaptive-model-router.git

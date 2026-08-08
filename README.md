@@ -79,7 +79,7 @@ node scripts/preview-dashboard-demo.mjs
 
 ## Quick demo
 
-> **Not published to npm yet** (packages are at `0.0.0`). Clone and
+> **Not published to npm yet** (publish-ready at `0.1.0`). Clone and
 > `pnpm install && pnpm -r build` first — see the
 > [Quickstart](docs/en/quickstart.md#1-install) for the three ways to consume the
 > built workspace, including a copy-pasteable one-liner that needs no API key.
@@ -434,12 +434,12 @@ squash-merged PR. The control plane additionally has a CI job that applies
 migrations and round-trips ingest against a real Postgres 17 service container.
 See [WORKFLOW.md](WORKFLOW.md) and [ROADMAP.md](ROADMAP.md).
 
-**Release status: not on npm yet.** All four packages are at `0.0.0` and
-unpublished, so `pnpm add @adaptive-router/sdk` will 404. Everything works from a
-source build (`pnpm install && pnpm -r build`) — the
+**Release status: not on npm yet.** The packages are publish-ready at `0.1.0`
+but not yet published, so `pnpm add @adaptive-router/sdk` will 404. Everything
+works from a source build (`pnpm install && pnpm -r build`) — the
 [Quickstart](docs/en/quickstart.md#1-install) covers linking it into your own
-project. Publishing the first tagged release is tracked in
-[ROADMAP.md](ROADMAP.md).
+project. See [RELEASING.md](RELEASING.md) for the publish flow and
+[ROADMAP.md](ROADMAP.md) for status.
 
 ## License
 
