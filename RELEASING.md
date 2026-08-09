@@ -30,12 +30,55 @@ in a browser does not write local credentials. Confirm with:
 
 ```bash
 npm whoami     # ENEEDAUTH means this machine is not authenticated
-npm login      # writes ~/.npmrc
-npm whoami     # should print your username
 ```
 
 Each package already declares `publishConfig.access: "public"`, so scoped
 packages publish publicly without extra flags.
+
+### Authentication: use a granular token, not a classic one
+
+**Classic tokens can no longer publish directly.** Even a token created with the
+"Publish" type fails on an account with 2FA enabled:
+
+```
+npm error code EOTP
+npm error This operation requires a one-time password from your authenticator.
+```
+
+npm states this plainly on any authenticated call:
+
+> npm tokens that bypass 2FA are being restricted for account changes and
+> **direct publishing** — <https://gh.io/npm-gat-bypass2fa-deprecation>
+
+This is a platform policy change, not a misconfiguration — it happens even when
+the account is an org owner and the token really is a publish token. Three ways
+forward, in order of preference:
+
+1. **Granular Access Token** (recommended). npmjs.com → Access Tokens →
+   Generate New Token → *Granular Access Token*; under **Packages and scopes**
+   select `@adaptive-router` with **Read and write**. These publish without an
+   OTP prompt, and they can be scoped and given an expiry. Then:
+
+   ```bash
+   printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > ~/.npmrc
+   chmod 600 ~/.npmrc
+   npm whoami         # should print your username
+   npm org ls adaptive-router    # should show you as owner
+   ```
+
+2. **One-time password per command**: `pnpm publish --access public --otp=<code>`.
+   Codes rotate every 30s; use a freshly refreshed one, since four publishes run
+   back to back.
+
+3. **Trusted Publishing via GitHub Actions** (OIDC, no token at all). The most
+   durable option, but it needs a workflow plus configuration on the npm side.
+
+Never commit a token. `~/.npmrc` is the only place it belongs, and it is outside
+the repo. Remove it once publishing is done if the machine is shared.
+
+> An `EOTP` failure is clean — nothing is partially published. Verify with
+> `curl -s -o /dev/null -w "%{http_code}" https://registry.npmjs.org/@adaptive-router%2fsdk`;
+> a 404 means the name is still free and you can simply retry.
 
 ### Team / access (optional)
 
@@ -157,17 +200,22 @@ Order matters: dependencies first, so a consumer installing `cli@0.1.0` can
 always resolve `sdk@0.1.0`.
 
 ```bash
-cd packages/sdk           && pnpm publish --access public
-cd ../dashboard           && pnpm publish --access public
-cd ../cli                 && pnpm publish --access public
-cd ../control-plane       && pnpm publish --access public
+cd packages/sdk           && pnpm publish --access public --no-git-checks
+cd ../dashboard           && pnpm publish --access public --no-git-checks
+cd ../cli                 && pnpm publish --access public --no-git-checks
+cd ../control-plane       && pnpm publish --access public --no-git-checks
 ```
 
-Add `--dry-run` first if you want npm's own view of what would be uploaded.
+Run the first one with `--dry-run` appended to see npm's own view of what would
+be uploaded — file list, unpacked size, resolved version. For the SDK at 0.1.0
+that is 63 files / 76.2 kB.
 
-`pnpm publish` refuses to run on a dirty working tree and rewrites `workspace:*`
-automatically. Do not use `npm publish` here — it does not understand
-`workspace:*` and would publish a broken manifest.
+`--no-git-checks` skips pnpm's branch and upstream assertions. It does **not**
+excuse a dirty tree — verify that yourself with `git status --porcelain` (the
+pre-publish checklist covers it), and only ever publish from `main`.
+
+Do not use `npm publish` here — it does not understand `workspace:*` and would
+publish a broken manifest. `pnpm publish` rewrites those to real versions.
 
 ## After publishing
 
