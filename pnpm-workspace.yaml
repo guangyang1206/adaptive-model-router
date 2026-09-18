@@ -1,3 +1,10 @@
+# `examples/*` is deliberately NOT a workspace member. The examples depend on
+# the published packages (`^0.1.0`), and a workspace member would have those
+# specifiers satisfied by a symlink to packages/ instead — so the examples would
+# silently exercise local source and could never catch a packaging defect
+# (missing file, missing shebang, an unrewritten `workspace:*`), which is the
+# one thing they exist to catch. Examples are consumers; they install from the
+# registry like any user. Keeping them out also stops the root lockfile from
+# going stale every time an example's dependencies change.
 packages:
   - "packages/*"
-  - "examples/*"
