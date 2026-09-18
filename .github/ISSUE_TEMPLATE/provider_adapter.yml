@@ -3,11 +3,16 @@ description: Request or propose support for a model provider.
 title: "provider: "
 labels: [provider, help wanted]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Already supported: OpenAI, Anthropic, Gemini, DeepSeek, Qwen, vLLM, and Ollama.
+        If yours is in that list, open a bug report instead — it exists and something is wrong with it.
   - type: input
     id: provider
     attributes:
       label: Provider name
-      placeholder: Qwen, Gemini, vLLM, SGLang...
+      placeholder: Mistral, Cohere, Bedrock, Azure OpenAI, SGLang...
     validations:
       required: true
   - type: input

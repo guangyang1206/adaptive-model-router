@@ -19,9 +19,6 @@ create_issue() {
 
 create_issue "Add examples for routing policies" "good first issue,docs,examples" "$DRAFT_DIR/01-routing-policy-examples.md"
 create_issue "Improve dashboard empty states" "good first issue,dashboard" "$DRAFT_DIR/02-dashboard-empty-states.md"
-create_issue "Add CLI help snapshots" "good first issue,cli,tests" "$DRAFT_DIR/03-cli-help-snapshots.md"
-create_issue "Add Qwen provider adapter" "help wanted,provider" "$DRAFT_DIR/04-qwen-provider-adapter.md"
-create_issue "Add Gemini provider adapter" "help wanted,provider" "$DRAFT_DIR/05-gemini-provider-adapter.md"
-create_issue "Add vLLM provider adapter" "help wanted,provider,open-source" "$DRAFT_DIR/06-vllm-provider-adapter.md"
-create_issue "Improve SQLite support beyond fallback mode" "help wanted,storage" "$DRAFT_DIR/07-sqlite-compatibility.md"
-create_issue "Add CI matrix" "help wanted,ci" "$DRAFT_DIR/08-ci-matrix.md"
+create_issue "Add CLI output tests" "good first issue,cli,tests" "$DRAFT_DIR/03-cli-help-snapshots.md"
+create_issue "Bring the SQLite store to event-stream parity with JSONL" "help wanted,storage" "$DRAFT_DIR/07-sqlite-compatibility.md"
+create_issue "Add a Node version CI matrix" "help wanted,ci" "$DRAFT_DIR/08-ci-matrix.md"

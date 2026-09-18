@@ -41,7 +41,8 @@ Add smoke tests that capture output for:
 
 > Note: the Qwen, Gemini, and vLLM provider adapters that used to be listed here
 > shipped in MVP-1. Use them as reference implementations when adding a new
-> provider — see `packages/sdk/src/providers/`.
+> provider — they all live in `packages/sdk/src/providers.ts`
+> (`createQwenProvider`, `createGeminiProvider`, `createVLLMProvider`).
 
 ### 4. Add a new provider adapter
 
@@ -70,25 +71,31 @@ The control plane has DB-less unit tests plus one real-Postgres round-trip
 ingest token rotation, and negative auth cases (expired session, wrong project
 token). Assert the project-scoping guarantee rather than assuming it.
 
-### 6. Add SQLite support for the cache and weights event streams
+### 6. Bring the SQLite store to event-stream parity with JSONL
 
 **Labels**: `help wanted`, `storage`
 
 The SQLite store deliberately omits the `cache_lookup` / `weights_change` event
-streams that JSONL retains (a known P2 follow-up from MVP-2). Bring SQLite to
-parity, keeping `node:sqlite` optional and the JSONL fallback intact.
+streams that JSONL retains — see the comment at
+`packages/sdk/src/storage.ts:360-362` (a known P2 follow-up from MVP-2). Pick
+SQLite and those two streams are silently absent, so dashboard views fed by them
+render empty with no explanation. Bring SQLite to parity, keeping `node:sqlite`
+optional and the JSONL fallback intact.
 
-### 7. Improve SQLite support beyond fallback mode
+Note that the *other* SQLite concerns once listed here have already shipped:
+runtime detection via a guarded dynamic import (`storage.ts:251`) and a named
+error when SQLite is unavailable and no `fallbackPath` is set
+(`storage.ts:257-262`). Parity is the part still open.
 
-**Labels**: `help wanted`, `storage`
-
-The current SQLite store uses Node's built-in `node:sqlite` when available and falls back to JSONL. Improve compatibility and tests across Node versions.
-
-### 8. Add CI matrix
+### 7. Add a Node version CI matrix
 
 **Labels**: `help wanted`, `ci`
 
-Expand CI to test multiple Node versions once the package manager strategy is stable.
+CI pins Node 22 in both jobs while the project advertises Node 20+, so the
+supported floor is untested. The test steps were already written as a bare
+`node --test` specifically so they work on both versions
+(`.github/workflows/ci.yml:78-82`), so this is mostly a matter of adding the
+matrix and confirming it.
 
 ## Contribution principles
 
