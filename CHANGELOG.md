@@ -3,6 +3,50 @@
 All notable changes to this project are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
+## 0.1.0 — 2026-09-18
+
+First published release. All four packages are on npm and installable the normal
+way; before this, the documented `pnpm add @adaptive-router/sdk` returned a 404
+and the only path was a source build.
+
+Contents are the accumulated MVP-0 → MVP-3 work described below — this release
+makes them distributable, it does not add features.
+
+### Published
+
+- `@adaptive-router/sdk` — routing core, zero runtime dependencies
+- `@adaptive-router/cli` — `init` / `doctor` / `inspect` / `export` / `eval`
+- `@adaptive-router/dashboard` — local read-only dashboard
+- `@adaptive-router/control-plane` — self-hosted team control plane
+
+Versions are **fixed across the workspace**: all four move together, so
+`sdk@0.1.0` pairs with `cli@0.1.0`. Compatibility needs no lookup table.
+
+### Fixed during release prep
+
+Found by packing each tarball and installing it into a clean project — none of
+these are visible from reading manifests:
+
+- control-plane declared `bin: adaptive-control-plane` but `dist/server.js` had
+  no shebang, so running it fell through to the shell:
+  `syntax error near unexpected token '('`
+- `deploy/.env.example` was missing from the tarball — npm excludes dotfiles
+  unless listed explicitly in `files` — while both quickstarts tell users to
+  `cp deploy/.env.example .env`
+- `packages/sdk/dist/index.test.js` was a stale artifact from a test deleted in
+  June. `tsc` only overwrites what it emits, so it survived every rebuild and
+  shipped. It also ran under `node --test`, inflating the SDK test count
+  (110 → 107 is that correction, not a regression). Each package now prunes
+  emitted files whose source is gone before building.
+- `LICENSE` was a 17-line notice rather than the full Apache-2.0 text
+
+### Verified against the registry
+
+Publish output is not proof. After publishing: `npm install` in a clean project
+reports `added 1 package` for the SDK (the zero-dependency claim, measured), the
+README example runs against the installed package, `workspace:*` resolved to
+`0.1.0` in cli's manifest, and both `bin` entries execute.
+
 ## MVP-3 — Team Control Plane
 
 Go from "one developer's local loop" to "a team sharing one routing view",

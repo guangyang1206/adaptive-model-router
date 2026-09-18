@@ -8,43 +8,22 @@ team setup, jump to [Share it with a team](#share-it-with-a-team-mvp-3).
 
 ## 1. Install
 
-> **Not on npm yet.** The packages are publish-ready at `0.1.0` but not yet
-> published, so `pnpm add @adaptive-router/sdk` will fail with a 404. Until the
-> first release, build from source — it takes about a minute.
-
 ```bash
-git clone https://github.com/guangyang1206/adaptive-model-router.git
-cd adaptive-model-router
-
-pnpm install        # pnpm 9, Node 20+ (CI runs 22). npm will NOT work here:
-                    # it skips the workspace links and cross-package imports break.
-pnpm -r build       # builds sdk -> dashboard -> cli -> control-plane
+pnpm add @adaptive-router/sdk
 ```
 
-Then use it from your own project by pointing at the built workspace — either
-link it (run this in *your* project; `pnpm link <dir>` takes a path):
+The SDK declares no runtime dependencies, so this adds exactly one package.
 
-```bash
-cd /path/to/your-project
-pnpm link /path/to/adaptive-model-router/packages/sdk
-```
+Optional companions: `@adaptive-router/cli` (dev commands),
+`@adaptive-router/dashboard` (local read-only UI),
+`@adaptive-router/control-plane` (self-hosted team plane).
 
-…or add a `file:` dependency in your `package.json`:
-
-```json
-{
-  "dependencies": {
-    "@adaptive-router/sdk": "file:../adaptive-model-router/packages/sdk"
-  }
-}
-```
-
-The quickest way to try it without wiring anything is to run inside the cloned
-repo, where the workspace links already exist:
+Verify it works without an API key — `evaluate()` only makes the routing
+decision, it never calls a provider:
 
 ```bash
 node --input-type=module -e "
-import { createRouter, createStaticProvider } from './packages/sdk/dist/index.js'
+import { createRouter, createStaticProvider } from '@adaptive-router/sdk'
 const models = [{ id: 'local/demo', provider: 'demo', model: 'demo', type: 'self-hosted',
   kind: 'openai-compatible', tier: 'balanced', contextWindow: 8192,
   capabilities: ['reasoning'], enabled: true,
@@ -56,11 +35,18 @@ console.log('ranked candidates:', e.candidates.length)
 "
 ```
 
-That needs no API key — `evaluate()` only makes the routing decision, it never
-calls a provider.
+### Building from source
 
-Once the packages are published, this section collapses back to a single
-`pnpm add @adaptive-router/sdk`.
+Only needed if you are contributing, or want an unreleased change:
+
+```bash
+git clone https://github.com/guangyang1206/adaptive-model-router.git
+cd adaptive-model-router
+
+pnpm install        # pnpm 9, Node 20+ (CI runs 22). npm will NOT work here:
+                    # it skips the workspace links and cross-package imports break.
+pnpm -r build       # builds sdk -> dashboard -> cli -> control-plane
+```
 
 ## 2. Initialize a router
 

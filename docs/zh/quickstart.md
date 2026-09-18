@@ -7,43 +7,21 @@ MVP-3（自托管团队控制面）。本文展示核心接入流程，完整 AP
 
 ## 1. 安装
 
-> **尚未发布到 npm。** 这些包已具备发布条件（版本 `0.1.0`）但还未发版，所以
-> `pnpm add @adaptive-router/sdk` 会返回 404 失败。首个正式版本发布前，请从源码构建
-> ——大约一分钟即可完成。
-
 ```bash
-git clone https://github.com/guangyang1206/adaptive-model-router.git
-cd adaptive-model-router
-
-pnpm install        # 需要 pnpm 9、Node 20+（CI 用 22）。不能用 npm：
-                    # npm 不会创建 workspace 软链，跨包导入会解析失败。
-pnpm -r build       # 依次构建 sdk -> dashboard -> cli -> control-plane
+pnpm add @adaptive-router/sdk
 ```
 
-之后在你自己的项目里引用这个已构建的 workspace ——可以 link（在**你的**项目里执行，
-`pnpm link <dir>` 接的是路径）：
+SDK 不声明任何运行时依赖，所以这一步只会新增一个包。
 
-```bash
-cd /path/to/your-project
-pnpm link /path/to/adaptive-model-router/packages/sdk
-```
+可选配套：`@adaptive-router/cli`（开发命令）、`@adaptive-router/dashboard`
+（本地只读看板）、`@adaptive-router/control-plane`（自托管团队控制面）。
 
-……也可以在 `package.json` 里写 `file:` 依赖：
-
-```json
-{
-  "dependencies": {
-    "@adaptive-router/sdk": "file:../adaptive-model-router/packages/sdk"
-  }
-}
-```
-
-如果只想最快地试一下、不想做任何接线，直接在克隆下来的仓库里运行即可（workspace 软链
-已经就绪）：
+不需要任何 API key 就能验证是否可用 —— `evaluate()` 只做路由决策，绝不会真的调用
+provider：
 
 ```bash
 node --input-type=module -e "
-import { createRouter, createStaticProvider } from './packages/sdk/dist/index.js'
+import { createRouter, createStaticProvider } from '@adaptive-router/sdk'
 const models = [{ id: 'local/demo', provider: 'demo', model: 'demo', type: 'self-hosted',
   kind: 'openai-compatible', tier: 'balanced', contextWindow: 8192,
   capabilities: ['reasoning'], enabled: true,
@@ -55,9 +33,18 @@ console.log('ranked candidates:', e.candidates.length)
 "
 ```
 
-这一步不需要任何 API key —— `evaluate()` 只做路由决策，绝不会真的调用 provider。
+### 从源码构建
 
-等包发布之后，本节会简化回一行 `pnpm add @adaptive-router/sdk`。
+仅在你要参与贡献、或需要某个尚未发版的改动时才需要：
+
+```bash
+git clone https://github.com/guangyang1206/adaptive-model-router.git
+cd adaptive-model-router
+
+pnpm install        # 需要 pnpm 9、Node 20+（CI 用 22）。不能用 npm：
+                    # npm 不会创建 workspace 软链，跨包导入会解析失败。
+pnpm -r build       # 依次构建 sdk -> dashboard -> cli -> control-plane
+```
 
 ## 2. 初始化 Router
 
