@@ -50,6 +50,8 @@ declare module "node:url" {
 declare module "node:fs" {
   export function readdirSync(path: string): string[]
   export function readFileSync(path: string, encoding: "utf8"): string
+  /** Resolves symlinks; server.ts uses it to recognise the npm .bin link. */
+  export function realpathSync(path: string): string
 }
 
 // Minimal process surface. `process.argv` lets server.ts detect direct exec.

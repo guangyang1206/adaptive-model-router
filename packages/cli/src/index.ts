@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import process from "node:process"
@@ -72,10 +72,33 @@ const command =
       : rawCommand
 const args = process.argv.slice(3)
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error))
-  process.exitCode = 1
-})
+/**
+ * True when this file is the process entrypoint. Mirrors
+ * packages/control-plane/src/server.ts so the repo has one entry convention.
+ * npm links `node_modules/.bin/adaptive-router` to `../@adaptive-router/cli/dist/index.js`,
+ * so argv[1] is the link path and only a resolved real-path comparison matches;
+ * a basename comparison would see the bin name and never fire.
+ *
+ * package.json declares this same file as "main", so guarding the call is what
+ * keeps `import "@adaptive-router/cli"` from printing usage as a side effect.
+ */
+function isMainModule(): boolean {
+  const entry = process.argv[1]
+  if (!entry) return false
+  try {
+    return realpathSync(entry) === fileURLToPath(import.meta.url)
+  } catch {
+    // argv[1] is not a resolvable file (node --eval, REPL, deleted entry).
+    return false
+  }
+}
+
+if (isMainModule()) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exitCode = 1
+  })
+}
 
 async function main(): Promise<void> {
   if (command === "init") runInit(args)
