@@ -118,15 +118,10 @@ earlier milestones, not commitments.
 
 ---
 
-## Distribution — publish-ready, not yet published 🔵
+## Distribution — shipped ✅
 
-Independent of feature milestones, and still the **single biggest barrier to
-adoption**: nothing is on npm, so the documented `pnpm add @adaptive-router/sdk`
-returns a 404. Everything works from a source build, but no one can install it
-the normal way.
-
-Prep is done (PR #13). What remains is the publish itself, which needs npm
-credentials on the publishing machine.
+All four packages are live on npm at `0.1.0`, so `pnpm add @adaptive-router/sdk`
+now works. This was the single biggest barrier to adoption.
 
 - ✅ Publish metadata on all four packages — version `0.1.0` **fixed across the
   workspace**, repository/homepage/bugs, keywords, engines,
@@ -136,14 +131,20 @@ credentials on the publishing machine.
   defects: a missing shebang on control-plane's `bin`, `deploy/.env.example`
   excluded by npm's dotfile rule, and a stale `dist/index.test.js` orphan that was
   both shipping and inflating the test count
-- ✅ `RELEASING.md` — scope setup, pre-publish gates, tarball verification,
+- ✅ `RELEASING.md` — scope setup, auth, pre-publish gates, tarball verification,
   publish order, version policy, bad-release recovery
 - ✅ npm scope `@adaptive-router` created
-- ⬜ `npm login` on the publishing machine (creating the org in a browser writes
-  no local credentials)
-- ⬜ Publish `sdk` → `dashboard` → `cli` → `control-plane` from `main`
+- ✅ Authenticate the publishing machine — a **granular access token** scoped to
+  `@adaptive-router` with read/write. Classic tokens are no longer accepted for
+  direct publishing on a 2FA account (`EOTP`), which is why the first attempt
+  failed
+- ✅ Publish `sdk` → `dashboard` → `cli` → `control-plane` from `main`
+- ✅ Verify from the registry, not from publish output — `npm install` in a clean
+  project reports `added 1 package` for the SDK (zero-dependency proof), the
+  README example runs, `workspace:*` resolved to `0.1.0` in cli's manifest, and
+  both `bin` entries execute
+- ✅ Collapse the Quickstart install section back to one line
 - ⬜ Tag `v0.1.0` + CHANGELOG entry
-- ⬜ Simplify the Quickstart install section back to one line once published
 - ⬜ Add a CI release workflow (tag → build → publish with provenance)
 
 Until the packages actually resolve, every install instruction must say plainly

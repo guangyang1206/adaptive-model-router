@@ -6,15 +6,14 @@ Read the whole file before running anything.
 
 ## Current state
 
-The `@adaptive-router` scope exists on npm (created 2026-08-04). All four package
-names are still unclaimed, and the packages are publish-ready at 0.1.0.
+All four packages are published on npm. First release: 0.1.0 on 2026-09-18.
 
 | Package | Version | On npm |
 | --- | --- | --- |
-| `@adaptive-router/sdk` | 0.1.0 | not yet |
-| `@adaptive-router/dashboard` | 0.1.0 | not yet |
-| `@adaptive-router/cli` | 0.1.0 | not yet |
-| `@adaptive-router/control-plane` | 0.1.0 | not yet |
+| `@adaptive-router/sdk` | 0.1.0 | ✅ published |
+| `@adaptive-router/dashboard` | 0.1.0 | ✅ published |
+| `@adaptive-router/cli` | 0.1.0 | ✅ published |
+| `@adaptive-router/control-plane` | 0.1.0 | ✅ published |
 
 Versions are **fixed across the workspace** — all four move together. This keeps
 compatibility trivial to reason about: `sdk@0.1.0` pairs with `cli@0.1.0`.
@@ -227,6 +226,30 @@ publish a broken manifest. `pnpm publish` rewrites those to real versions.
    npm init -y >/dev/null && npm install @adaptive-router/sdk
    ```
 
+   Expect `added 1 package` for the SDK — that is the zero-dependency claim
+   measured rather than asserted. Then run the README example against the
+   installed package, and check `node_modules/@adaptive-router/cli/package.json`
+   resolved `workspace:*` to a real version.
+
+   > **A 404 right after publishing does not mean the publish failed.** The
+   > packument (the package index `install` uses to resolve `@*`) takes a minute
+   > or two to propagate, while the version document is available immediately.
+   > Observed on the 0.1.0 release: `/@adaptive-router%2fsdk` returned 404 while
+   > `/@adaptive-router%2fsdk/0.1.0` returned 200 and `npm access list packages`
+   > already listed the package.
+   >
+   > The decisive check is to **publish the same version again** — it costs
+   > nothing and cannot overwrite:
+   >
+   > ```bash
+   > pnpm publish --access public --no-git-checks
+   > # 403 "You cannot publish over the previously published versions: 0.1.0."
+   > #   -> the first publish succeeded, just wait for propagation
+   > # succeeds -> the first one really had failed, and now it is done
+   > ```
+   >
+   > Either outcome is the answer you need, which is why this beats guessing.
+
 2. **Tag the release.**
 
    ```bash
@@ -234,18 +257,18 @@ publish a broken manifest. `pnpm publish` rewrites those to real versions.
    git push origin v0.1.0
    ```
 
-3. **Simplify the install docs.** `docs/en/quickstart.md`, `docs/zh/quickstart.md`,
-   and `README.md` currently carry an honest "not on npm yet, build from source"
-   callout. Once the packages resolve, collapse that section back to one line:
+3. **Simplify the install docs.** Done for 0.1.0 — `docs/en/quickstart.md`,
+   `docs/zh/quickstart.md`, and `README.md` now open with:
 
    ```bash
    pnpm add @adaptive-router/sdk
    ```
 
-   Keep the build-from-source path as a secondary option for contributors.
+   The build-from-source path stays as a secondary option for contributors.
+   For future releases, verify these still match reality.
 
-4. **Update `ROADMAP.md`** — check off the items under
-   *Distribution — not shipped* and retitle the section.
+4. **Update `ROADMAP.md`** — check off the items under *Distribution* and retitle
+   the section to match its actual state.
 
 5. **Add a `CHANGELOG.md` entry** for the release.
 
