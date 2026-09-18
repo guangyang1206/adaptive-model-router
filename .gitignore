@@ -11,3 +11,8 @@ coverage
 *.db
 .learnings/
 .workbuddy/
+
+# Zero-byte hard links left behind when a sandboxed environment blocks pnpm's
+# store cleanup. Harmless, but untracked and named unpredictably, so `git add -A`
+# would otherwise commit them into a public repo.
+_tmp_*

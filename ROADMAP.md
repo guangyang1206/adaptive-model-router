@@ -101,20 +101,32 @@ package (the core SDK stays zero-dependency). Enterprise-grade governance items
 
 ---
 
-## MVP-4 — Governance and Scale ⬜ (Next)
+## MVP-4 — Governance and Scale ⬜ (candidates only)
 
 Goal: turn the shipped control plane into something an organization can govern.
-Scope is **not yet locked** — the items below are candidates carried over from
-earlier milestones, not commitments.
 
-- ⬜ Full RBAC matrix (`admin` / `viewer` activation)
-- ⬜ Audit log
-- ⬜ Team budgets and cost attribution
-- ⬜ Organization-level provider keys
+**Scope is deliberately not locked, and will stay that way until there is real
+usage feedback.** The packages went live on npm on 2026-09-18 — day one, zero
+reported usage. Which of the items below matters most depends entirely on who
+adopts this and how they run it. Locking scope now would be locking a guess.
+
+The items below are candidates inherited from earlier milestones, not
+commitments. Four are deferred MVP-3 work, four are carried from MVP-1/MVP-2:
+
+- ⬜ Full RBAC matrix (`admin` / `viewer` activation) — *deferred from MVP-3*
+- ⬜ Audit log — *deferred from MVP-3*
+- ⬜ Team budgets and cost attribution — *deferred from MVP-3*
+- ⬜ Organization-level provider keys — *deferred from MVP-3*
 - ⬜ Policy dry-run UI — *carried from MVP-1*
 - ⬜ Local Proxy / HTTP Bridge — *carried from MVP-1*
 - ⬜ Prompt / context compression — *carried from MVP-2*
 - ⬜ Helicone / Langfuse exporter — *carried from MVP-2*
+
+What unblocks the decision: a handful of concrete answers to "what are you
+building, and where did the router get in your way". Until then the work that
+actually pays off is adoption and release engineering, not more features.
+
+Tracked in `docs/decisions/OPEN-DECISIONS.md`.
 
 ---
 
@@ -144,11 +156,12 @@ now works. This was the single biggest barrier to adoption.
   README example runs, `workspace:*` resolved to `0.1.0` in cli's manifest, and
   both `bin` entries execute
 - ✅ Collapse the Quickstart install section back to one line
-- ⬜ Tag `v0.1.0` + CHANGELOG entry
+- ✅ Tag `v0.1.0` + CHANGELOG entry — `06f9148`, tagged 2026-09-18
 - ⬜ Add a CI release workflow (tag → build → publish with provenance)
 
-Until the packages actually resolve, every install instruction must say plainly
-that they are unreleased. Docs that imply otherwise are worse than no docs.
+Publishing is currently a manual sequence run from a developer machine, which is
+the one remaining weak point: it depends on a local token and on someone
+remembering the correct package order. The release workflow closes that.
 
 ---
 
