@@ -14,6 +14,8 @@
 // Unauthenticated: HTML request → 302 /login; API request → 401 envelope.
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
+import { realpathSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import type { ControlPlaneConfig } from "./config.js"
 import { buildConfig } from "./config.js"
 import { getSql, closeSql, type Sql } from "./db/client.js"
@@ -180,10 +182,34 @@ export async function bootstrap(config: ControlPlaneConfig = buildConfig()): Pro
   }
 }
 
+/**
+ * True when this file is the process entrypoint, for both `node dist/server.js`
+ * and the installed bin. npm links `node_modules/.bin/adaptive-control-plane` to
+ * `../@adaptive-router/control-plane/dist/server.js`, so under the bin argv[1] is
+ * the *link* path and its basename is the bin name, not "server.js" — comparing
+ * names (as this did before) never matched, bootstrap() was skipped, and the
+ * process exited 0 having printed nothing. Resolved real paths match in both
+ * cases: realpathSync follows the link back here, and ESM resolution already
+ * hands us import.meta.url as a real path.
+ *
+ * Returning false when merely imported is load-bearing: tests and embedders
+ * import bootstrap()/createRequestHandler and must not start a server.
+ */
+function isMainModule(): boolean {
+  if (typeof process === "undefined") return false
+  const entry = process.argv[1]
+  if (!entry) return false
+  try {
+    return realpathSync(entry) === fileURLToPath(import.meta.url)
+  } catch {
+    // argv[1] is not a resolvable file (node --eval, REPL, deleted entry).
+    return false
+  }
+}
+
 // When executed directly (bin entry), boot and listen. Errors exit non-zero with
 // a clear message (A14).
-const isMain = typeof process !== "undefined" && process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")
-if (isMain) {
+if (isMainModule()) {
   bootstrap()
     .then((server) => server.listen())
     .catch((error) => {
