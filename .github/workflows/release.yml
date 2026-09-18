@@ -1,0 +1,368 @@
+name: Release
+
+# Publishes all four @adaptive-router/* packages to npm when a `v*` tag is
+# pushed. Replaces the manual flow in RELEASING.md, which depended on a local
+# npm token and on the operator remembering the correct package order.
+#
+# Manual publishing stays documented as a fallback — see RELEASING.md.
+#
+# Do not rename this file without reading docs/decisions/OPEN-DECISIONS.md first.
+# npm Trusted Publishing pins its authorization to a workflow *filename*, so once
+# a trusted publisher is configured for these packages, renaming release.yml
+# silently breaks publishing — the diff looks like a harmless rename.
+on:
+  push:
+    tags:
+      - "v*"
+
+# `id-token: write` is what makes npm provenance possible: the npm CLI exchanges
+# a GitHub OIDC token for a Sigstore signing certificate, so the published
+# tarball is publicly linked to this workflow run and commit.
+# Ref: https://docs.npmjs.com/generating-provenance-statements
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    # Provenance requires a *cloud-hosted* runner. Self-hosted runners cannot
+    # mint the OIDC token npm needs, so this must stay `ubuntu-latest`.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      # `registry-url` is what wires NODE_AUTH_TOKEN into an .npmrc that the
+      # npm CLI reads. `pnpm publish` shells out to `npm publish` under the
+      # hood (pnpm 9 packs a tarball, then delegates), and it inherits the full
+      # process environment — so both the auth token and the OIDC request
+      # variables reach npm. Deliberately no dependency cache: a release build
+      # should resolve everything from the lockfile, not from a warm cache.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # Frozen install, same as CI: proves the lockfile is complete AND creates
+      # the workspace symlinks. Never `npm install` here — npm does not create
+      # pnpm workspace links, so cross-package imports fail with TS2307.
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # Versions are fixed across the workspace (ADR-010, and RELEASING.md
+      # "Version policy"): all four packages move together, so tag v0.2.0 must
+      # mean 0.2.0 in all four manifests. ADR-010 explains why — dashboard and
+      # control-plane are coupled tightly enough that independent versioning
+      # could produce an incompatible pair that nobody notices. This step is the
+      # machine gate for that rule; without it a drifted manifest publishes a
+      # version nobody tagged, which is unfixable once it is on npm.
+      - name: Assert tag matches every package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "tag=$GITHUB_REF_NAME -> version=$TAG_VERSION"
+          echo "RELEASE_VERSION=$TAG_VERSION" >> "$GITHUB_ENV"
+          drift=0
+          for pkg in sdk dashboard cli control-plane; do
+            pkg_version="$(node -p "require('./packages/$pkg/package.json').version")"
+            if [ "$pkg_version" = "$TAG_VERSION" ]; then
+              echo "  ok       packages/$pkg -> $pkg_version"
+            else
+              echo "  MISMATCH packages/$pkg -> $pkg_version"
+              drift=1
+            fi
+          done
+          if [ "$drift" -ne 0 ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match all package versions."
+            echo "Versions are fixed across the workspace. Bump all four with:"
+            echo "  pnpm -r exec npm version $TAG_VERSION --no-git-tag-version"
+            echo "then commit, re-tag, and push again."
+            exit 1
+          fi
+
+      # npm never lets a version be overwritten — a second attempt returns
+      # 403 "You cannot publish over the previously published versions".
+      # Deciding that up front turns a confusing mid-publish 403 into an
+      # explicit plan, and makes a re-run after a partial failure resume
+      # instead of dying on the package that already made it through.
+      #
+      # This queries the *version* document, not the package index. The index
+      # lags a minute or two behind a publish (observed on the 0.1.0 release:
+      # index 404 while the version document already returned 200), so the
+      # version document is the only trustworthy signal right after a publish.
+      - name: Registry preflight (what is already published?)
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > publish-plan.txt
+          already=0
+          total=0
+          for pkg in sdk dashboard cli control-plane; do
+            name="$(node -p "require('./packages/$pkg/package.json').name")"
+            encoded="${name//\//%2f}"
+            url="https://registry.npmjs.org/$encoded/$RELEASE_VERSION"
+            code="$(curl -sS -o /dev/null -w '%{http_code}' "$url")"
+            total=$((total + 1))
+            case "$code" in
+              200)
+                echo "  published  $name@$RELEASE_VERSION (will skip)"
+                already=$((already + 1))
+                ;;
+              404)
+                echo "  to publish $name@$RELEASE_VERSION"
+                echo "$pkg" >> publish-plan.txt
+                ;;
+              *)
+                echo "::error::Registry returned HTTP $code for $url — cannot determine whether $name@$RELEASE_VERSION exists. Refusing to publish blind."
+                exit 1
+                ;;
+            esac
+          done
+          if [ "$already" -eq "$total" ]; then
+            echo "::error::Every package is already published at $RELEASE_VERSION. npm does not allow republishing a version. If this release needs a fix, bump the version and push a new tag; if you are re-running a job that already succeeded, nothing needs to happen."
+            exit 1
+          fi
+          if [ "$already" -gt 0 ]; then
+            echo "::warning::$already of $total packages were already at $RELEASE_VERSION — resuming with the rest."
+          fi
+
+      # Same gate as CI, run again here against the exact tagged tree. CI green
+      # on `main` is not proof that the tag is green: the tag could point at a
+      # different commit. Publishing is irreversible, so this gets re-proven.
+      - name: Dependency boundary
+        run: pnpm check:deps
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # `pnpm -r build` (root `build` script) builds in topological order, so
+      # the SDK is compiled before the packages that import it.
+      - name: Build
+        run: pnpm build
+
+      # Root `test` script = `pnpm -r test` = `node --test` per package. These
+      # are the DB-less suites; the Postgres round-trip lives outside `test/`
+      # and stays in the `control-plane-integration` job in ci.yml, so no
+      # service container is needed for a release.
+      - name: Test
+        run: pnpm test
+
+      # Fixed order: sdk -> dashboard -> cli -> control-plane. dashboard, cli
+      # and control-plane all depend on the SDK (and control-plane also on
+      # dashboard), so a consumer installing cli@X must be able to resolve
+      # sdk@X from the registry the moment cli@X appears.
+      #
+      # `pnpm publish`, never `npm publish`: npm would upload `workspace:*`
+      # verbatim and break every install. pnpm rewrites workspace ranges to the
+      # real version when it packs.
+      #
+      # `--no-git-checks` is required, not a shortcut: a tag build checks out a
+      # detached HEAD, and pnpm then aborts with ERR_PNPM_GIT_UNKNOWN_BRANCH
+      # ("The Git HEAD may not attached to any branch") no matter how clean the
+      # tree is. Verified on a real detached-HEAD checkout of v0.1.0.
+      # Note the flag disables *every* git assertion, dirty-tree included — that
+      # is acceptable here only because this tree is a fresh checkout of the tag
+      # and cannot be dirty. Do not copy the flag somewhere that is not true.
+      - name: Publish to npm (dependency order)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          while read -r pkg; do
+            [ -n "$pkg" ] || continue
+            echo "--- publishing packages/$pkg ---"
+            if ! (cd "packages/$pkg" && pnpm publish --access public --provenance --no-git-checks); then
+              echo "::error::pnpm publish failed for packages/$pkg."
+              echo "Common causes:"
+              echo "  403 'cannot publish over the previously published versions' — the version already exists; bump it and re-tag."
+              echo "  403/ENEEDAUTH — the NPM_TOKEN secret is missing, expired, or is a classic token (classic tokens can no longer publish; use a granular access token with read+write on the @adaptive-router scope)."
+              echo "  provenance errors — check that this job still has 'id-token: write' and runs on a GitHub-hosted runner."
+              echo "Packages published before this point stayed published. Re-running this workflow skips them and resumes here."
+              exit 1
+            fi
+          done < publish-plan.txt
+
+      # Read back from the registry rather than trusting the publish exit code.
+      - name: Verify the release landed
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=0
+          for pkg in sdk dashboard cli control-plane; do
+            name="$(node -p "require('./packages/$pkg/package.json').name")"
+            encoded="${name//\//%2f}"
+            code="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$encoded/$RELEASE_VERSION")"
+            if [ "$code" = "200" ]; then
+              echo "  ok      $name@$RELEASE_VERSION"
+            else
+              echo "  MISSING $name@$RELEASE_VERSION (HTTP $code)"
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::At least one package is not readable from the registry at $RELEASE_VERSION."
+            exit 1
+          fi
+          echo "All four packages are live at $RELEASE_VERSION."
+
+      # The step above proves the version documents exist. It does not prove the
+      # published tarball is usable — a missing dist file, a bad `files` list or
+      # an unrewritten `workspace:*` all produce a package that reads as
+      # published and breaks on first install. This runs the real
+      # examples/minimal/index.mjs against the real published tarball, installed
+      # with npm the way an outside user would, and fails the release if the
+      # artifact cannot actually be used.
+      #
+      # It matters more since examples/ left the pnpm workspace: inside the
+      # workspace those dependencies resolved to a symlink into packages/, so an
+      # example could never catch a packaging defect. Installing from the
+      # registry here is what makes the check real.
+      #
+      # The example file is copied into the temp dir rather than run in place.
+      # Node resolves a bare import from the *importing file's* directory
+      # upward, so running it from examples/minimal would find the repo's own
+      # node_modules and silently test local source again — the exact failure
+      # this step exists to prevent.
+      - name: Smoke test the published SDK as an outside user would
+        shell: bash
+        run: |
+          set -euo pipefail
+          SMOKE_DIR="$(mktemp -d)"
+          cp examples/minimal/index.mjs "$SMOKE_DIR/"
+          cd "$SMOKE_DIR"
+          npm init -y >/dev/null
+
+          # `npm install pkg@version` resolves through the package index, which
+          # lags the version document by a minute or two after a publish. That
+          # lag was observed on the 0.1.0 release (index 404 while the version
+          # document already returned 200), so a single attempt here would fail
+          # a perfectly good release. Retry before believing a failure.
+          installed=0
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if npm install "@adaptive-router/sdk@$RELEASE_VERSION" >install.log 2>&1; then
+              installed=1
+              echo "  installed on attempt $attempt"
+              break
+            fi
+            echo "  attempt $attempt: not installable yet, waiting 15s for the package index to propagate"
+            sleep 15
+          done
+          if [ "$installed" -ne 1 ]; then
+            echo "::error::@adaptive-router/sdk@$RELEASE_VERSION was published but could not be installed after 8 attempts over ~2 minutes. This is well past normal index propagation, so treat it as a real packaging or registry problem, not a delay."
+            cat install.log
+            exit 1
+          fi
+
+          if ! node index.mjs > smoke.out 2>smoke.err; then
+            echo "::error::The published @adaptive-router/sdk@$RELEASE_VERSION installs but cannot run. The release is on npm and cannot be unpublished — ship a patch version and deprecate this one (see RELEASING.md 'If something goes wrong')."
+            cat smoke.err
+            exit 1
+          fi
+          cat smoke.out
+
+          # Assert the routing result, not just that something printed. The
+          # example asks for quality "high", so the high-tier model must rank
+          # first. Ordering is asserted rather than exact scores, so a
+          # legitimate future change to the scoring weights does not fail a
+          # release; BUILTIN_WEIGHTS itself is frozen by its own test (ADR-002).
+          if ! grep -q 'demo/large' smoke.out || ! grep -q 'demo/small' smoke.out; then
+            echo "::error::Smoke output is missing expected candidates. The SDK ran but did not evaluate both models."
+            exit 1
+          fi
+          if [ "$(head -1 smoke.out | cut -d' ' -f1)" != "demo/large" ]; then
+            echo "::error::Expected the high-tier model to rank first for a quality=high route; got: $(head -1 smoke.out)"
+            exit 1
+          fi
+          echo "Published SDK installs from the registry and routes correctly."
+
+      - name: Smoke test the published bin entries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Why this step exists: the 0.1.0 release shipped `control-plane` with
+          # a `bin` declared but no shebang on dist/server.js, so running it fell
+          # through to the shell as `syntax error near unexpected token '('`. That
+          # was caught by hand, in a clean directory, by someone who remembered to
+          # look. Nothing mechanical would have caught it. This step is that check.
+          #
+          # `npx` resolves through the package index too, so it needs the same
+          # propagation retry as the SDK install above.
+          BIN_TMP="$(mktemp -d)"
+
+          # Writes combined output to a file and returns the command's own exit
+          # code, because the caller needs both. Note it does NOT return output on
+          # stdout: a `$(...)` capture would run this in a subshell, where any exit
+          # code stashed in a variable is lost to the parent — that mistake cost a
+          # run here with `RETRY_RC: unbound variable`.
+          run_bin() {
+            local desc="$1" outfile="$2"; shift 2
+            local rc
+            for attempt in 1 2 3 4 5 6 7 8; do
+              rc=0
+              "$@" >"$outfile" 2>&1 || rc=$?
+              [ "$rc" -eq 0 ] && return 0
+              # Only a registry-resolution failure is worth retrying. Anything else
+              # is a real run whose output and exit code we want to inspect.
+              if ! grep -qiE '404|could not determine executable|no matching version' "$outfile"; then
+                return "$rc"
+              fi
+              echo "  $desc: attempt $attempt not resolvable yet, waiting 15s" >&2
+              sleep 15
+            done
+            echo "::error::$desc could not be resolved from the registry after 8 attempts over ~2 minutes. Past normal index propagation, so treat as a real packaging problem." >&2
+            cat "$outfile" >&2
+            exit 1
+          }
+
+          echo "--- @adaptive-router/cli ---"
+          CLI_RC=0
+          run_bin 'cli --help' "$BIN_TMP/cli.out" \
+            npx --yes "@adaptive-router/cli@$RELEASE_VERSION" --help || CLI_RC=$?
+          cat "$BIN_TMP/cli.out"
+          if [ "$CLI_RC" -ne 0 ]; then
+            echo "::error::The published CLI exited $CLI_RC on --help."
+            exit 1
+          fi
+          if ! grep -q 'Usage:' "$BIN_TMP/cli.out"; then
+            echo "::error::The published CLI ran but printed no usage text. If this is a shell syntax error, dist/index.js lost its shebang."
+            exit 1
+          fi
+
+          echo "--- @adaptive-router/control-plane ---"
+          # Asserting BOTH the message and a non-zero exit, because each catches a
+          # different defect that actually shipped in 0.1.0:
+          #
+          #   missing shebang  -> the shell parses JS and dies with "syntax error
+          #                       near unexpected token '('". Caught by the message.
+          #   broken bin entry -> the main-module guard compared basenames, so under
+          #                       the bin it never matched, bootstrap() never ran,
+          #                       and the process exited 0 printing nothing. Caught
+          #                       by both checks.
+          #
+          # A correct build fail-fasts on the missing DATABASE_URL and exits 1. An
+          # exit 0 here is not "fail-fast by design" — it is the 0.1.0 silent no-op.
+          CP_RC=0
+          run_bin 'control-plane boot' "$BIN_TMP/cp.out" \
+            npx --yes "@adaptive-router/control-plane@$RELEASE_VERSION" || CP_RC=$?
+          cat "$BIN_TMP/cp.out"
+          if ! grep -q 'Missing required environment variable: DATABASE_URL' "$BIN_TMP/cp.out"; then
+            echo "::error::The published control-plane bin did not produce its Node-level fail-fast message. Empty output with exit 0 is the 0.1.0 silent no-op; a shell 'syntax error near unexpected token' means dist/server.js lost its shebang."
+            exit 1
+          fi
+          if [ "$CP_RC" -eq 0 ]; then
+            echo "::error::The published control-plane bin printed its fail-fast message but exited 0. It must exit non-zero when a required environment variable is missing, or callers and orchestrators will read a failed boot as success."
+            exit 1
+          fi
+
+          echo "Both published bin entries execute under Node and report failure correctly."
