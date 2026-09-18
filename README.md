@@ -433,7 +433,7 @@ squash-merged PR. The control plane additionally has a CI job that applies
 migrations and round-trips ingest against a real Postgres 17 service container.
 See [WORKFLOW.md](WORKFLOW.md) and [ROADMAP.md](ROADMAP.md).
 
-**Release status: published on npm at `0.1.0`.** All four packages are live:
+**Release status: published on npm at `0.1.1`.** All four packages are live:
 
 ```bash
 pnpm add @adaptive-router/sdk              # zero runtime dependencies
@@ -442,9 +442,10 @@ pnpm add @adaptive-router/dashboard        # local read-only UI
 pnpm add @adaptive-router/control-plane    # self-hosted team plane
 ```
 
-Versions are fixed across the workspace — all four move together, so `sdk@0.1.0`
-pairs with `cli@0.1.0`. See [RELEASING.md](RELEASING.md) for the publish flow and
-[ROADMAP.md](ROADMAP.md) for what's next.
+Versions are fixed across the workspace — all four move together, so the minor
+and patch numbers always agree across packages. See
+[CHANGELOG.md](CHANGELOG.md) for what changed, [RELEASING.md](RELEASING.md) for
+the publish flow, and [ROADMAP.md](ROADMAP.md) for what's next.
 
 ## License
 

@@ -3,6 +3,60 @@
 All notable changes to this project are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
+## 0.1.1 — 2026-09-18
+
+Patch release. One user-facing defect in `0.1.0`, plus the release engineering
+that found it.
+
+### Fixed
+
+- **`adaptive-control-plane` did nothing and reported success.** The bin was
+  declared and the shebang was present, but the main-module guard compared
+  basenames:
+
+  ```js
+  import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")
+  ```
+
+  npm links `.bin/adaptive-control-plane` to `dist/server.js`, so under the bin
+  `argv[1]`'s basename is the bin name and never matches `server.js`.
+  `bootstrap()` never ran and the process exited 0 with no output — while both
+  the README and the quickstart present this bin as the way to start the
+  service. Now compares resolved real paths, which agree for direct and bin
+  invocation alike. `node dist/server.js` was unaffected and stays unaffected.
+
+- **`import "@adaptive-router/cli"` ran the CLI.** `dist/index.js` is declared
+  as both `bin` and `main` and had no main-module guard at all, so importing the
+  package executed it and printed usage. Same guard applied; both packages now
+  share one entry convention.
+
+If you only use `@adaptive-router/sdk`, nothing here affects you — upgrading is
+harmless but not required.
+
+### Added
+
+- A tag-triggered release workflow that publishes with provenance and then
+  checks the published artifact the way a user meets it: installs from the
+  registry into a temp directory, asserts the routing result, and runs both
+  `bin` entries. The bin check is what found the defect above, on its first run
+  against `0.1.0`.
+- `docs/decisions/` — 12 ADRs and an open-decisions register, covering the
+  invariants that were previously only in commit messages.
+- `examples/minimal` — one dependency, no API key, no TypeScript toolchain.
+- A bilingual release announcement under `docs/announcements/`.
+
+### Changed
+
+- `examples/*` is no longer a pnpm workspace member. As members, their
+  `^0.1.0` ranges were satisfied by symlinks into `packages/`, so the examples
+  exercised local source and could never catch a packaging defect — the one job
+  they have now that the packages are published. See ADR-012.
+- `examples/basic-agent` had unreachable fallback logic: the Ollama provider was
+  registered unconditionally, so a first-time user with no daemon got a route
+  that completed and reported failure. Ollama is now opt-in via
+  `OLLAMA_BASE_URL`, the response content is printed rather than only the trace,
+  and the dashboard is behind `DASHBOARD=1` so the process exits.
+
 ## 0.1.0 — 2026-09-18
 
 First published release. All four packages are on npm and installable the normal
