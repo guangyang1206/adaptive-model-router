@@ -1,6 +1,6 @@
 {
   "name": "@adaptive-router/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Zero-dependency adaptive model router for agent apps — quality-gated routing, fallback, and tracing across OpenAI, Anthropic, DeepSeek, Gemini, Qwen, Ollama, and self-hosted vLLM.",
   "type": "module",
   "license": "Apache-2.0",

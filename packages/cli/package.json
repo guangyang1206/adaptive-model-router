@@ -1,6 +1,6 @@
 {
   "name": "@adaptive-router/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Developer CLI for Adaptive Model Router — init config, check provider env, inspect traces, export diagnostics, run the eval harness.",
   "type": "module",
   "license": "Apache-2.0",

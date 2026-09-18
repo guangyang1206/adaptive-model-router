@@ -6,17 +6,22 @@ Read the whole file before running anything.
 
 ## Current state
 
-All four packages are published on npm. First release: 0.1.0 on 2026-09-18.
+All four packages are published on npm. First release 0.1.0 (2026-09-18, by
+hand); current 0.1.1.
 
 | Package | Version | On npm |
 | --- | --- | --- |
-| `@adaptive-router/sdk` | 0.1.0 | published |
-| `@adaptive-router/dashboard` | 0.1.0 | published |
-| `@adaptive-router/cli` | 0.1.0 | published |
-| `@adaptive-router/control-plane` | 0.1.0 | published |
+| `@adaptive-router/sdk` | 0.1.1 | published |
+| `@adaptive-router/dashboard` | 0.1.1 | published |
+| `@adaptive-router/cli` | 0.1.1 | published |
+| `@adaptive-router/control-plane` | 0.1.1 | published |
 
-Versions are **fixed across the workspace** — all four move together. This keeps
-compatibility trivial to reason about: `sdk@0.1.0` pairs with `cli@0.1.0`.
+Versions are **fixed across the workspace** — all four move together, so the
+minor and patch numbers always agree across packages and compatibility needs no
+lookup table.
+
+Version numbers appearing in the examples further down are illustrative and are
+not kept in sync with this table; substitute the version you are releasing.
 
 ## Two paths, and which one to use
 

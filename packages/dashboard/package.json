@@ -1,6 +1,6 @@
 {
   "name": "@adaptive-router/dashboard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local read-only dashboard for Adaptive Model Router — inspect routing decisions, models, evals, semantic cache, and route learning.",
   "type": "module",
   "license": "Apache-2.0",
